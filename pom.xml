@@ -164,6 +164,15 @@
       <id>perf</id>
       <properties>
         <excluded.test.groups></excluded.test.groups>
+        <!--
+          Coverage instrumentation is switched OFF for timing runs. JaCoCo attaches a bytecode
+          agent that rewrites every class as it loads, and the ensemble's hot loop is exactly the
+          kind of tight numerical code it slows most. A T-P1 figure measured under the agent is
+          not the figure NFR-1 is about, and reporting one would overstate the cost of the
+          ensemble by a wide margin. Run coverage and timing separately: `mvnw verify` for the
+          gate, `mvnw verify -Pperf` for the numbers.
+        -->
+        <jacoco.skip>true</jacoco.skip>
       </properties>
     </profile>
   </profiles>

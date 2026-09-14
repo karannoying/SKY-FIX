@@ -5,15 +5,23 @@ import com.skyfix.core.atmos.ConstantWindField;
 import com.skyfix.core.atmos.SoundingWindField;
 import com.skyfix.core.atmos.Ussa1976Atmosphere;
 import com.skyfix.core.atmos.WindField;
+import com.skyfix.core.flight.EllipseFitter;
+import com.skyfix.core.flight.EnsembleRunner;
 import com.skyfix.core.flight.FlightSimulator;
 import com.skyfix.core.flight.IntegratorFactory;
 import com.skyfix.domain.BalloonConfig;
+import com.skyfix.domain.DispersionSpec;
+import com.skyfix.domain.Ensemble;
+import com.skyfix.domain.FlightParameters;
+import com.skyfix.domain.LandingEllipse;
 import com.skyfix.domain.SimSettings;
 import com.skyfix.domain.StateHistory;
 import com.skyfix.domain.error.SkyfixException;
 import com.skyfix.io.CsvWriter;
 import com.skyfix.io.GeoJsonWriter;
 import com.skyfix.persistence.Database;
+import com.skyfix.persistence.EllipseDao;
+import com.skyfix.persistence.EnsembleDao;
 import com.skyfix.persistence.Mission;
 import com.skyfix.persistence.RunDao;
 import com.skyfix.persistence.RunRecord;
@@ -23,6 +31,9 @@ import com.skyfix.persistence.StoredSounding;
 import com.skyfix.persistence.SoundingDao;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -39,6 +50,14 @@ public final class PredictionService {
 
     private static final Logger LOG = Logger.getLogger(PredictionService.class.getName());
 
+    /**
+     * How many members' full trajectories are stored. BLUEPRINT §9 budgets the nominal member plus
+     * a sample of about twenty, so a 1,000-member run holds tens of thousands of state rows rather
+     * than millions.
+     */
+    private static final int STORED_HISTORY_SAMPLE = 20;
+
+    private final Database database;
     private final RunDao runs;
     private final RunStateDao states;
     private final SoundingDao soundings;
@@ -48,13 +67,17 @@ public final class PredictionService {
      * @param database the database to write into
      */
     public PredictionService(Database database) {
+        this.database = database;
         this.runs = new RunDao(database);
         this.states = new RunStateDao(database);
         this.soundings = new SoundingDao(database);
     }
 
+    /** Confidence levels the blueprint reports a footprint at. */
+    public static final List<Double> CONFIDENCE_LEVELS = List.of(0.50, 0.95);
+
     /**
-     * Predicts a landing point and stores the run.
+     * Predicts a landing point with a single deterministic flight.
      *
      * @param mission    the mission
      * @param config     the stored balloon configuration
@@ -123,6 +146,91 @@ public final class PredictionService {
     }
 
     /**
+     * Predicts a landing <em>footprint</em> by dispersing the flight parameters over an ensemble
+     * (FR-2.4, O2).
+     *
+     * <p>This is the answer the project exists to give: not a point, but an ellipse with a stated
+     * probability. The nominal member's trajectory is still exported, so the altitude profile a
+     * payload engineer needs is not lost in the aggregate.
+     *
+     * @param mission     the mission
+     * @param config      the stored balloon configuration
+     * @param soundingId  the sounding to use, or {@code null} for a windless prediction
+     * @param settings    integration settings
+     * @param spec        how far each parameter is dispersed
+     * @param memberCount how many members to fly
+     * @param context     provenance for this execution
+     * @param outputDir   where exports are written
+     * @return the run record, the ensemble, the fitted ellipses and the nominal trajectory
+     * @throws SkyfixException if too many members fail, or the run cannot be stored
+     */
+    public EnsembleResult predictFootprint(Mission mission, StoredBalloonConfig config,
+                                           Long soundingId, SimSettings settings,
+                                           DispersionSpec spec, int memberCount,
+                                           RunContext context, Path outputDir)
+            throws SkyfixException {
+
+        IntegratorFactory.create(settings.integrator());
+        WindField wind = resolveWindField(soundingId);
+        BalloonConfig balloon = config.config();
+
+        RunRecord run = runs.save(new RunRecord(null, mission.id(), config.id(), soundingId, null,
+                "PREFLIGHT", settings.integrator(), settings.stepSeconds(), memberCount,
+                context.seed(), context.gitSha(), balloon.configHash(), context.hostCores(),
+                context.startedUtc(), null, RunRecord.RUNNING));
+
+        try {
+            EnsembleRunner runner = new EnsembleRunner(atmosphere, wind);
+            EnsembleRunner.Result result = runner.run(balloon, spec, settings, mission.launch(),
+                    memberCount, context.seed(), STORED_HISTORY_SAMPLE);
+            Ensemble ensemble = result.ensemble();
+
+            List<LandingEllipse> ellipses = new ArrayList<>();
+            for (double confidence : CONFIDENCE_LEVELS) {
+                ellipses.add(EllipseFitter.fit(ensemble.landingPoints(), confidence,
+                        mission.groundElevationM()));
+            }
+
+            // Persist the full landing set and the ellipses, plus trajectories for the sampled
+            // members only -- BLUEPRINT §9's retention rule, which is what keeps a 1,000-member
+            // run to tens of thousands of rows rather than millions.
+            new EnsembleDao(database).saveAll(run.id(), ensemble, null);
+            new EllipseDao(database).saveAll(run.id(), ellipses, null);
+            for (Map.Entry<Integer, StateHistory> entry : result.histories().entrySet()) {
+                states.saveHistory(run.id(), entry.getKey(), entry.getValue());
+            }
+
+            // The trajectory exported alongside the footprint is the NOMINAL flight -- the
+            // undispersed parameters -- not member 0, which is just the first draw of the design
+            // and can sit anywhere in the distribution. Labelling a dispersed draw "nominal" would
+            // misreport the altitude profile a payload engineer schedules against (persona P2).
+            // One extra flight costs about twenty milliseconds.
+            Path runDir = outputDir.resolve("run-" + run.id());
+            StateHistory nominal = new FlightSimulator(atmosphere, wind)
+                    .run(balloon, FlightParameters.nominal(balloon), settings, mission.launch());
+            CsvWriter.writeTrajectory(runDir.resolve("trajectory.csv"), nominal);
+            CsvWriter.writeSummary(runDir.resolve("summary.csv"), run.id(), nominal);
+            CsvWriter.writeLandingScatter(runDir.resolve("landing-scatter.csv"), ensemble);
+            CsvWriter.writeEllipses(runDir.resolve("ellipses.csv"), run.id(), ellipses);
+            GeoJsonWriter.writeFlight(runDir.resolve("flight.geojson"), nominal);
+            GeoJsonWriter.writeFootprint(runDir.resolve("footprint.geojson"), ellipses, ensemble);
+
+            runs.finish(run.id(), context.elapsedMs(), RunRecord.OK);
+
+            if (ensemble.failureCount() > 0) {
+                LOG.warning(() -> ensemble.failureCount() + " of " + memberCount
+                        + " members failed and were discarded");
+            }
+            return new EnsembleResult(run.withId(run.id()), ensemble, ellipses, nominal, runDir,
+                    wind.name(), runner.threadCount());
+        } catch (SkyfixException e) {
+            runs.finish(run.id(), context.elapsedMs(), RunRecord.FAILED);
+            LOG.log(Level.SEVERE, "ensemble run " + run.id() + " failed", e);
+            throw e;
+        }
+    }
+
+    /**
      * The outcome of a prediction.
      *
      * @param run          the stored run record
@@ -132,5 +240,31 @@ public final class PredictionService {
      */
     public record PredictionResult(RunRecord run, StateHistory history, Path outputDir,
                                    String windFieldName) {
+    }
+
+    /**
+     * The outcome of an ensemble prediction.
+     *
+     * @param run           the stored run record
+     * @param ensemble      every member's parameters and landing point
+     * @param ellipses      the fitted confidence ellipses, in the order of
+     *                      {@link #CONFIDENCE_LEVELS}
+     * @param nominalHistory the trajectory of member 0, exported for the altitude profile
+     * @param outputDir     the directory the exports were written to
+     * @param windFieldName which wind field was used
+     * @param threadCount   the pool size used, for NFR-1 reporting
+     */
+    public record EnsembleResult(RunRecord run, Ensemble ensemble, List<LandingEllipse> ellipses,
+                                 StateHistory nominalHistory, Path outputDir, String windFieldName,
+                                 int threadCount) {
+
+        /**
+         * @param confidence the level to look for
+         * @return the ellipse at that confidence, if it was fitted
+         */
+        public java.util.Optional<LandingEllipse> ellipseAt(double confidence) {
+            return ellipses.stream()
+                    .filter(e -> Math.abs(e.confidence() - confidence) < 1e-9).findFirst();
+        }
     }
 }

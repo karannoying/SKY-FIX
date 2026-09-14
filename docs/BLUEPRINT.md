@@ -368,7 +368,7 @@ score it with no code change.
 | Descent | **Constant-Cd parachute** · Mach/Re-dependent Cd | Constant, estimated | Descent above 25 km is drag-limited and fast; landing point is dominated by wind advection in the last 10 km |
 | Integrator | Euler · **RK4** · RKF45 · symplectic | RK4 default at dt = 0.25 s, RKF45 available | Euler needs dt < 0.1 s for the same accuracy and kills NFR-1; RKF45 gives the error estimate and the T-V3 cross-check; symplectic buys nothing for a dissipative system. **Measured (ADR-13):** the step is bounded by absolute stability on the parachute descent, not by accuracy — drag damping reaches ~3.6 /s near the ground, and RK4's real-axis limit of 2.785 caps the step at ~0.77 s there |
 | Estimator | EKF · UKF · **particle filter** · batch least squares | Bootstrap PF with jitter | Burst is a hard discontinuity and the pre-burst posterior can be bimodal; no Jacobians needed; batch LSQ cannot answer mid-flight. Cost capped at 500 particles to hold FR-3.3 |
-| Sampling | **Latin hypercube** · plain MC · Sobol | LHS over 5 parameters | LHS reaches a stable 95% ellipse in ~400 members where plain MC needs ~1,500 (verify: measure and report the actual convergence) |
+| Sampling | **Latin hypercube** · plain MC · Sobol | LHS over 5 parameters | LHS guarantees marginal coverage by construction: **measured**, plain MC leaves more than a fifth of the strata unvisited at N = 1,000, while LHS fills every one exactly once (T-U-LHS). verify: the claim that LHS reaches a stable 95% ellipse in ~400 members where plain MC needs ~1,500 is still unmeasured — both paths now exist, so run each at increasing member counts, find where the semi-axes settle, and quote the measurement (ADR-14) |
 
 ### Evaluation methodology
 
@@ -380,7 +380,7 @@ score it with no code change.
 | T-V4 | Gas-law mass/volume invariant over a full flight | <1e-6 relative drift |
 | T-V5 | Parameter recovery, 20 DS-6 flights with known truth | Cd ≤5%, burst altitude ≤500 m, in ≥18/20 |
 | T-V6 | Live vs frozen landing error, same 20 flights | median reduction ≥30% |
-| T-V7 | 95% ellipse empirical containment | 0.90–0.98 |
+| T-V7 | 95% ellipse empirical containment | 0.90–0.98 — **the fitter is calibrated**: against a synthetic Gaussian cloud the 50/90/95% ellipses contained 49.9/90.0/95.1% (T-U-ELLIPSE). T-V7 repeats this against real ensembles, where the Gaussian assumption may not hold |
 | T-E2 | Burst detection, σ=10 m GPS noise, 3 s dropout | ≤5 s, ≤150 m, 0 false positives |
 | T-D2 | Real-hardware replay of the DS-5 bench log | completes, no NaN, dropouts reported |
 

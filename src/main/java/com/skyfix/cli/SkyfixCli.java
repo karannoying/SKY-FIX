@@ -4,6 +4,7 @@ import com.skyfix.app.IngestService;
 import com.skyfix.app.PredictionService;
 import com.skyfix.app.RunContext;
 import com.skyfix.app.ValidationService;
+import com.skyfix.domain.DispersionSpec;
 import com.skyfix.domain.SimSettings;
 import com.skyfix.domain.error.SkyfixException;
 import com.skyfix.domain.error.ValidationException;
@@ -163,15 +164,25 @@ public final class SkyfixCli {
                 settings = settings.withIntegrator(options.get("integrator"));
             }
 
+            int memberCount = Integer.parseInt(options.getOrDefault("members", "1"));
             RunContext context = RunContext.start(seed);
-            PredictionService.PredictionResult result = new PredictionService(database)
-                    .predict(mission, config, soundingId, settings, context, outputDir);
+            PredictionService service = new PredictionService(database);
 
-            reporter.printPrediction(result.run().id(), result.history(),
-                    result.windFieldName(), result.outputDir());
-            reporter.info(String.format("  seed %d | git %s | %s dt=%s s | %d ms",
+            if (memberCount <= 1) {
+                PredictionService.PredictionResult result =
+                        service.predict(mission, config, soundingId, settings, context, outputDir);
+                reporter.printPrediction(result.run().id(), result.history(),
+                        result.windFieldName(), result.outputDir());
+            } else {
+                DispersionSpec spec = DispersionSpec.preflightDefault(config.config());
+                PredictionService.EnsembleResult result = service.predictFootprint(
+                        mission, config, soundingId, settings, spec, memberCount, context,
+                        outputDir);
+                reporter.printFootprint(result);
+            }
+            reporter.info(String.format("  seed %d | git %s | %s dt=%s s | %d members | %d ms",
                     context.seed(), context.gitSha(), settings.integrator(),
-                    settings.stepSeconds(), context.elapsedMs()));
+                    settings.stepSeconds(), memberCount, context.elapsedMs()));
             return 0;
         }
     }
@@ -303,6 +314,9 @@ public final class SkyfixCli {
                     --sounding-id <id>           imported sounding to use as the wind field
                     --step     <seconds>         integration step (default: 0.25)
                     --integrator <RK4|RKF45>     integration scheme
+                    --members  <n>               ensemble members; 1 is a single deterministic
+                                                 flight, above that a dispersed footprint with
+                                                 50% and 95% confidence ellipses (default: 1)
                     --seed     <n>               run seed (default: 42)
                     --out      <dir>             export directory (default: out)
                     --db       <file>            database file (default: skyfix.db)

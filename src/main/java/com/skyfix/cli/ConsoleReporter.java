@@ -136,6 +136,46 @@ public final class ConsoleReporter {
     }
 
     /**
+     * Prints the outcome of an ensemble prediction — the footprint, not just a point.
+     *
+     * @param result the ensemble result
+     */
+    public void printFootprint(com.skyfix.app.PredictionService.EnsembleResult result) {
+        var ensemble = result.ensemble();
+        out.println();
+        out.printf(Locale.ROOT, "Run %d - landing footprint, %d members (wind: %s)%n",
+                result.run().id(), ensemble.members().size(), result.windFieldName());
+        out.println("-".repeat(72));
+
+        result.nominalHistory().burst().ifPresent(b -> out.printf(Locale.ROOT,
+                "  nominal burst   %,10.0f m   at T+%.0f s%n", b.altitudeM(), b.timeSeconds()));
+        out.printf(Locale.ROOT, "  mean burst      %,10.0f m%n", ensemble.meanBurstAltitudeM());
+        result.nominalHistory().landing().ifPresent(l -> out.printf(Locale.ROOT,
+                "  flight time     %,10.0f s   (%.0f min)%n",
+                l.timeSeconds(), l.timeSeconds() / 60.0));
+        out.println();
+
+        for (var ellipse : result.ellipses()) {
+            out.printf(Locale.ROOT, "  %2.0f%% ellipse   centre %10.6f, %.6f%n",
+                    ellipse.confidence() * 100,
+                    ellipse.centre().latitudeDeg(), ellipse.centre().longitudeDeg());
+            out.printf(Locale.ROOT,
+                    "                 axes %,.0f x %,.0f m at %.0f deg | area %,.1f km2%n",
+                    ellipse.semiMajorM(), ellipse.semiMinorM(), ellipse.azimuthDeg(),
+                    ellipse.areaKm2());
+        }
+
+        out.println();
+        if (ensemble.failureCount() > 0) {
+            out.printf(Locale.ROOT, "  WARNING      %d of %d members failed and were discarded%n",
+                    ensemble.failureCount(), ensemble.members().size());
+        }
+        out.printf(Locale.ROOT, "  ensemble     %,d ms on %d threads%n",
+                ensemble.wallClockMs(), result.threadCount());
+        out.println("  exports      " + result.outputDir());
+    }
+
+    /**
      * Prints a line of normal output.
      *
      * @param message the message
