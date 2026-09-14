@@ -35,7 +35,7 @@ while it is airborne, and re-predicts the landing point as a confidence ellipse.
 | ID | Objective | Measure |
 |----|-----------|---------|
 | O1 | Offline atmosphere and flight model in hand-written Java | USSA-1976 within 0.1% for T, p, ρ at 25 altitudes 0–47 km (T-V1); ascent rate within 2% of analytic at 5 altitudes (T-V2) |
-| O2 | Dispersed footprint, not a point | 1,000-member ensemble + 50/95% ellipse in ≤30 s on 4 cores (T-P1) |
+| O2 | Dispersed footprint, not a point | 1,000-member ensemble + 50/95% ellipse in ≤30 s on 4 cores (T-P1) — **met, 5,836 ms median** |
 | O3 | Estimate flight parameters from telemetry | Over 20 synthetic flights, posterior median recovers ascent Cd within 5% and burst altitude within 500 m in ≥18 runs (T-V5) |
 | O4 | Prove the in-flight update is worth it | Median landing-error reduction ≥30% vs the frozen pre-flight prediction (T-V6) |
 | O5 | Reproducible by a grader | Fresh clone → `mvnw test` green offline; ≥80% JaCoCo on core packages; identical seed → identical ellipse (T-R1) |
@@ -143,7 +143,7 @@ UC-3 post-flight scoring · UC-4 model validation · UC-5 synthetic flight gener
 
 | ID | Category | Target | Verification |
 |----|----------|--------|--------------|
-| NFR-1 | Performance | 1,000-member ensemble with 60 s steps to landing ≤30 s wall-clock, 4-core laptop, JDK 21, warm JVM, ≤2 GB heap | T-P1 (3-run median), T-P2 |
+| NFR-1 | Performance | 1,000-member ensemble to landing ≤30 s wall-clock, 4-core laptop, JDK 21, warm JVM, ≤2 GB heap | T-P1 (3-run median), T-P2 — **met: 5,836 ms median** (5,232 / 5,836 / 5,862) on 4 cores at the 0.25 s step ADR-13 requires, against a sounding-interpolated wind field; T-P2 **1,054 ms** against 5 s. Measured with coverage instrumentation off (see ADR-15) |
 | NFR-2 | Reliability | Atmosphere within 0.1% of USSA-1976 at 25 points; RK4 vs RKF45 landing within 50 m; mass/volume bookkeeping drift <1e-6 relative | T-V1–T-V4; `validate` exits non-zero on breach |
 | NFR-3 | Error handling | Every external input failure produces a typed exception carrying `file:line:field`; a 10,000-line corrupted sounding and a truncated binary dump both exit cleanly, non-zero code, zero stack traces shown to the user | T-E1, T-E2, T-E3 |
 | NFR-4 | Maintainability | ≥80% JaCoCo line coverage on `core.*` and `estimation`; 10 packages, no cycles; no concatenated SQL | T-M1 (build gate), T-S1 (source scan) |

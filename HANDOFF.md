@@ -23,8 +23,9 @@ and a 45 km ascent with ~400 km of drift.
 
 ## Current Progress
 
-**The MVP cut-line is built, green and tagged `v0.1-mvp`.** Handoff steps 1–5 are complete:
-scaffold → domain → atmosphere and integrators → flight dynamics and wind → persistence → CLI.
+**The MVP is tagged `v0.1-mvp`, and the week-5 ensemble is built and green.** `predict --members N`
+now produces a landing footprint — 50% and 95% confidence ellipses — rather than a single point,
+which is objective O2.
 
 A fresh clone plus a JDK runs the whole path offline in three commands. `./mvnw verify` passes
 with the JaCoCo gate. `./scripts/run.sh validate` reports **84 checks, 84 passed**.
@@ -49,7 +50,16 @@ with the JaCoCo gate. `./scripts/run.sh validate` reports **84 checks, 84 passed
 | T-V2 ascent rate vs analytic terminal velocity | 2% | **worst 0.017%** |
 | T-V3 RK4 vs RKF45 landing, dt 0.5/0.25/0.125 s | 50 m | **0.0025 / 0.000085 / 0.0000048 m** |
 | T-V4 gas-law mass invariant | 1e-6 | **7.9e-16** |
+| T-U-ELLIPSE semi-axes and orientation | 2% | **0.58% / 0.51% / 0.27°** |
+| T-U-ELLIPSE containment at 50/90/95% | 0.90–0.98 at 95% | **49.9 / 90.0 / 95.1%** |
+| T-P1 1,000 members, 4 cores, sounding wind | 30 s | **5.84 s** (3-run median) |
+| T-P2 200-member re-prediction | 5 s | **1.05 s** |
+| T-R1 same seed, 1 vs 4 threads | 1e-9 | **met** |
 | Coverage, `core.atmos` / `core.flight` | 80% | **100% / 96.4%** |
+
+**Measure timing with `-Pperf` only, and with nothing else on the machine.** T-P1's first reading
+was 91,670 ms — void, because it ran under the JaCoCo agent and shared four cores with a concurrent
+build. ADR-15 records the conditions the real figure was taken under.
 
 Two blueprint `verify:` items are now measured rather than estimated:
 **ADR-9** haversine vs Vincenty at ~400 km = **0.327%**; **ADR-1** a best-fit exponential
@@ -98,21 +108,30 @@ Things the implementation itself disproved:
   forbids. Found by writing the negative test, not by reading the code.
 - **`run` does not cascade from `mission`, deliberately.** The first T-D3 asserted a cascade
   that would have destroyed the provenance record NFR-5 exists to keep.
+- **A Maclaurin series for `erf` is wrong past |x| ≈ 3.** Its largest term grows like `exp(x²)`
+  before cancelling back to a result of order one, so `cdf(8)` came out 7e-5 wrong — invisible,
+  because the quadrature check that would have caught it only swept ±4. Now a continued fraction
+  handles the tail, and the check sweeps ±8.
+- **Every ensemble member was building a trajectory that was thrown away.** About three million
+  wasted objects per 1,000-member run, at 16.6 s against 9.7 s once members outside the retention
+  sample stopped sampling states at all.
+- **A performance figure measured under instrumentation is not a performance figure.** See ADR-15.
 
 ## Next Steps
 
 Work in order. The MVP is tagged, so everything below is additive.
 
-1. **`DispersionSampler` (Latin hypercube over 5 parameters), `EnsembleRunner`, `EllipseFitter`
-   (covariance eigen-decomposition by hand), T-P1, T-U-LHS, T-U-ELLIPSE.** Week 5, tag
-   `v0.2-ensemble`.
-   **Read ADR-13 first.** A single flight is ~50 ms at dt = 0.25 s, so 1,000 members is ~50 s
-   single-threaded. NFR-1's 30 s budget on 4 cores is reachable but no longer comfortable, and
-   the 0.25 s step is not negotiable downward. Measure T-P1 early; if it misses, the honest
-   options are a coarser `stateSampleStride`, a larger pool, or restating NFR-1 with the
-   stability constraint as the reason — not a bigger step.
-2. **`PlotExporter` (PL-1, PL-2), `ConsoleReporter` tables, T-U1 extension.** Week 6, tag
-   `v0.2-ensemble`.
+1. ~~`DispersionSampler`, `EnsembleRunner`, `EllipseFitter`, T-P1, T-U-LHS, T-U-ELLIPSE.~~
+   **Done.** NFR-1 is met with room to spare: **5,836 ms median** for 1,000 members on 4 cores,
+   against a 30 s budget, at the 0.25 s step ADR-13 requires and against a sounding-interpolated
+   wind field. T-P2 is 1,054 ms against 5 s.
+   An earlier note here warned that the budget was tight, on the basis of a ~50 ms-per-flight
+   figure taken from a cold JVM. Warm, a flight costs about 18 ms. Disregard the warning.
+2. **`PlotExporter` (PL-1, PL-2), `ConsoleReporter` tables, T-U1 extension.** Week 6.
+   PL-1 is altitude vs time with the ensemble band; PL-2 is the landing scatter with the 50/95%
+   ellipses. Both have their data already: `out/run-<id>/trajectory.csv`,
+   `landing-scatter.csv` and `ellipses.csv` are written on every `--members` run, so the plotting
+   work is XChart wiring rather than new computation.
 3. **`SyntheticFlightWriter` + 20 truth flights from `data/truth/seeds.csv`, `CsvTelemetryReader`,
    `BurstDetector` + T-E2.** Week 7.
 4. **`ParticleFilter`, `GaussianMeasurementModel`, `SystematicResampler`, `ReplayService`, T-V5.**

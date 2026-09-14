@@ -9,10 +9,10 @@ Reg. No. 25BAS10049.
 
 ## What it does today
 
-This is the **`v0.1-mvp` cut-line**: ingest → atmosphere → one deterministic flight → persistence →
-CSV/GeoJSON export, with the reference-case validation suite wired to a CLI command. The Monte Carlo
-ensemble, the confidence ellipse and the particle filter are specified in `docs/BLUEPRINT.md` and are
-not implemented yet; `validate` lists them by name rather than passing silently.
+This is **`v0.2-ensemble`**: ingest → atmosphere → flight model → Monte Carlo footprint →
+persistence → CSV/GeoJSON export, with the reference-case validation suite wired to a CLI command.
+The particle-filter estimator is specified in `docs/BLUEPRINT.md` and is not implemented yet;
+`validate` lists the cases that depend on it by name rather than passing silently.
 
 | Capability | Status |
 |---|---|
@@ -22,7 +22,7 @@ not implemented yet; `validate` lists them by name rather than passing silently.
 | Radiosonde sounding ingest and wind interpolation (FR-1.1, FR-2.2) | done, validated by T-U-WIND, T-E3 |
 | SQLite persistence, 13 tables, 6 DAOs (ADR-2) | done, validated by T-D1, T-D3, T-D4, T-S1 |
 | CLI: `ingest`, `predict`, `validate`, `version` | done, validated by T-U1, T-E1 |
-| Monte Carlo ensemble + 50/95% ellipse (FR-2.4) | **not yet** — week 5 |
+| Monte Carlo ensemble + 50/95% ellipse (FR-2.4) | done, validated by T-U-LHS, T-U-ELLIPSE, T-P1, T-R1 |
 | Particle-filter parameter estimation (FR-3.x) | **not yet** — week 8 |
 | PNG plots (FR-4.2) | **not yet** — week 6 |
 
@@ -42,6 +42,10 @@ git clone <repository-url> && cd SKY-FIX
                          --epoch 2026-09-14T00:00:00Z
 ./scripts/run.sh predict --mission data/missions/mission.json \
                          --balloon data/missions/balloon.json --sounding-id 1
+
+# a dispersed footprint rather than a single point: 50% and 95% confidence ellipses
+./scripts/run.sh predict --mission data/missions/mission.json \
+                         --balloon data/missions/balloon.json --sounding-id 1 --members 1000
 ```
 
 ```cmd
@@ -51,7 +55,9 @@ scripts\run.cmd predict --mission data\missions\mission.json --balloon data\miss
 ```
 
 `predict` writes `out/run-<id>/` containing `trajectory.csv`, `summary.csv` and `flight.geojson`
-(drop the GeoJSON onto any map to see the track, burst point and landing point). Per-run detail goes
+(drop the GeoJSON onto any map to see the track, burst point and landing point). With `--members`
+it also writes `landing-scatter.csv`, `ellipses.csv` and `footprint.geojson`, the last holding each
+confidence ellipse as a polygon alongside every member's landing point. Per-run detail goes
 to `out/skyfix.0.log`; the console carries warnings and above.
 
 ### Exit codes
@@ -88,7 +94,11 @@ this table; the figures below are its current output.
 | T-V2 | Ascent rate against analytic buoyancy–drag terminal velocity, 5 altitudes | 2% | **worst 0.017%** |
 | T-V3 | RK4 vs RKF45 landing separation, dt = 0.5 / 0.25 / 0.125 s | 50 m | **0.0025 / 0.000085 / 0.0000048 m** |
 | T-V4 | Gas mass recovered from each stored diameter | 1e-6 relative | **7.9e-16** |
-| T-V5–T-V7 | Parameter recovery, error reduction, ellipse containment | — | not yet implemented (weeks 5–9) |
+| T-U-ELLIPSE | Recover known semi-axes and orientation from a synthetic cloud | 2% | **0.58% / 0.51% / 0.27°** |
+| T-P1 | 1,000-member ensemble, 4 cores, warm JVM, sounding wind | 30 s | **5.84 s** (3-run median) |
+| T-P2 | 200-member re-prediction | 5 s | **1.05 s** |
+| T-R1 | Same seed, 1 thread vs 4 threads, identical ellipse | 1e-9 | **met** |
+| T-V5–T-V7 | Parameter recovery, error reduction, ellipse containment | — | not yet implemented (weeks 7–9) |
 
 Two figures the blueprint left open are now measured rather than estimated:
 
@@ -112,9 +122,12 @@ own limit by applying itself to `y' = λy` — nothing is transcribed. See `docs
 
 ## Known limitations
 
-- **One deterministic flight, not a footprint.** The ensemble and confidence ellipse are the point of
-  the project and are not built yet (FR-2.4, week 5). Until then a prediction is a point with no
-  stated uncertainty.
+- **The footprint assumes the landing scatter is roughly Gaussian.** The ellipse comes from a
+  covariance fit, so a strongly sheared wind could produce a scatter it describes poorly. A very
+  high aspect ratio is the signal — a constant-wind ensemble gives one in the thousands, because
+  every bit of the dispersion then lands along a single axis. T-V7 will measure containment against
+  real profiles; if the assumption fails there, the honest fix is a convex hull or a density
+  contour, reported as such (ADR-14).
 - **A single sounding stands in for a 4-D wind field** (ADR-7). Over a long drift the profile is
   assumed to hold along the whole track. This is the model's largest named error source; the
   `wind_scale` dispersion exists to carry it into the footprint once the ensemble lands.
