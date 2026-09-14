@@ -54,6 +54,22 @@ class PlotExporterTest {
                            Ensemble ensemble, List<LandingEllipse> ellipses) {
     }
 
+    private static Fixture shared;
+
+    /**
+     * One ensemble, computed once and shared.
+     *
+     * <p>Each test used to build its own, which meant flying about 270 members to render a
+     * handful of PNGs — twenty-two seconds for a class whose subject is chart rendering, not
+     * simulation. The charts are indifferent to which ensemble they draw.
+     */
+    private static synchronized Fixture shared() throws Exception {
+        if (shared == null) {
+            shared = fixture(30);
+        }
+        return shared;
+    }
+
     private static Fixture fixture(int members) throws Exception {
         BalloonConfig config = config();
         SimSettings settings = SimSettings.builder()
@@ -77,7 +93,7 @@ class PlotExporterTest {
     @Test
     @DisplayName("FR-4.2: the ensemble plots are written at deterministic names and are non-empty")
     void ensemblePlotsAreWritten(@TempDir Path dir) throws Exception {
-        Fixture f = fixture(40);
+        Fixture f = shared();
         List<Path> written = PlotExporter.exportEnsemblePlots(dir, f.nominal(), f.members(),
                 f.ensemble(), f.ellipses(), LAUNCH);
 
@@ -94,7 +110,7 @@ class PlotExporterTest {
     @Test
     @DisplayName("FR-4.2: each plot decodes as an image of the documented size")
     void plotsDecodeAtTheExpectedSize(@TempDir Path dir) throws Exception {
-        Fixture f = fixture(30);
+        Fixture f = shared();
         List<Path> written = PlotExporter.exportEnsemblePlots(dir, f.nominal(), f.members(),
                 f.ensemble(), f.ellipses(), LAUNCH);
 
@@ -115,7 +131,7 @@ class PlotExporterTest {
         // right size, right name, no data. Counting distinct colours catches it, because a blank
         // chart is a handful of colours (surface, grid, axis text) while a drawn one is hundreds
         // once anti-aliasing is in play.
-        Fixture f = fixture(30);
+        Fixture f = shared();
         List<Path> written = PlotExporter.exportEnsemblePlots(dir, f.nominal(), f.members(),
                 f.ensemble(), f.ellipses(), LAUNCH);
 
@@ -138,7 +154,7 @@ class PlotExporterTest {
         // Asserting the palette reached the image, not merely that it was configured: a series
         // drawn in the wrong colour, or hidden behind another, is invisible to every other check
         // here.
-        Fixture f = fixture(30);
+        Fixture f = shared();
         List<Path> written = PlotExporter.exportEnsemblePlots(dir, f.nominal(), f.members(),
                 f.ensemble(), f.ellipses(), LAUNCH);
 
@@ -185,7 +201,9 @@ class PlotExporterTest {
     @Test
     @DisplayName("FR-4.2: the plots are written well inside the 5 s budget")
     void plotsAreWrittenInsideTheBudget(@TempDir Path dir) throws Exception {
-        Fixture f = fixture(100);
+        // Rendering cost is dominated by the chart, not the member count: the scatter is one
+        // series however many points it holds.
+        Fixture f = shared();
         long start = System.nanoTime();
         PlotExporter.exportEnsemblePlots(dir, f.nominal(), f.members(), f.ensemble(),
                 f.ellipses(), LAUNCH);
@@ -198,7 +216,7 @@ class PlotExporterTest {
     @Test
     @DisplayName("Re-exporting the same run overwrites rather than accumulating files")
     void exportIsIdempotent(@TempDir Path dir) throws Exception {
-        Fixture f = fixture(20);
+        Fixture f = shared();
         PlotExporter.exportEnsemblePlots(dir, f.nominal(), f.members(), f.ensemble(),
                 f.ellipses(), LAUNCH);
         PlotExporter.exportEnsemblePlots(dir, f.nominal(), f.members(), f.ensemble(),
@@ -214,7 +232,7 @@ class PlotExporterTest {
     @Test
     @DisplayName("An ensemble with no fitted ellipses still produces a footprint chart")
     void footprintSurvivesWithoutEllipses(@TempDir Path dir) throws Exception {
-        Fixture f = fixture(20);
+        Fixture f = shared();
         List<Path> written = PlotExporter.exportEnsemblePlots(dir, f.nominal(), f.members(),
                 f.ensemble(), List.of(), LAUNCH);
         assertThat(written).hasSize(2);

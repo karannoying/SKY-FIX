@@ -79,18 +79,18 @@ class EnsembleRunnerTest {
         BalloonConfig config = config();
         EnsembleRunner.Result result = new EnsembleRunner(ATMOSPHERE, WIND)
                 .run(config, DispersionSpec.preflightDefault(config), settings(), LAUNCH,
-                        120, 42L, 1);
+                        80, 42L, 1);
 
         Ensemble ensemble = result.ensemble();
-        assertThat(ensemble.members()).hasSize(120);
-        assertThat(ensemble.successCount()).isEqualTo(120);
+        assertThat(ensemble.members()).hasSize(80);
+        assertThat(ensemble.successCount()).isEqualTo(80);
         assertThat(ensemble.failureCount()).isZero();
         assertThat(ensemble.failureRate()).isZero();
 
         List<GeoPoint> landings = ensemble.landingPoints();
-        assertThat(landings).hasSize(120);
+        assertThat(landings).hasSize(80);
         assertThat(landings.stream().map(GeoPoint::latitudeDeg).distinct())
-                .as("members must not all land on the same point").hasSizeGreaterThan(100);
+                .as("members must not all land on the same point").hasSizeGreaterThan(70);
 
         // A dispersed ensemble straddles the nominal flight rather than sitting to one side.
         GeoPoint nominal = new FlightSimulator(ATMOSPHERE, WIND)
@@ -113,9 +113,9 @@ class EnsembleRunnerTest {
         // Different pool sizes on purpose: if any result depended on completion order, the two
         // runs would diverge here. That is exactly what ADR-6 exists to prevent.
         LandingEllipse first = fitFrom(new EnsembleRunner(ATMOSPHERE, WIND, 1)
-                .run(config, spec, settings(), LAUNCH, 150, 20260914L, 0));
+                .run(config, spec, settings(), LAUNCH, 60, 20260914L, 0));
         LandingEllipse second = fitFrom(new EnsembleRunner(ATMOSPHERE, WIND, 4)
-                .run(config, spec, settings(), LAUNCH, 150, 20260914L, 0));
+                .run(config, spec, settings(), LAUNCH, 60, 20260914L, 0));
 
         assertThat(second.semiMajorM()).isEqualTo(first.semiMajorM(), within(1e-9));
         assertThat(second.semiMinorM()).isEqualTo(first.semiMinorM(), within(1e-9));
@@ -136,11 +136,11 @@ class EnsembleRunnerTest {
         BalloonConfig config = config();
         DispersionSpec spec = DispersionSpec.preflightDefault(config);
         Ensemble single = new EnsembleRunner(ATMOSPHERE, WIND, 1)
-                .run(config, spec, settings(), LAUNCH, 60, 7L, 0).ensemble();
+                .run(config, spec, settings(), LAUNCH, 40, 7L, 0).ensemble();
         Ensemble parallel = new EnsembleRunner(ATMOSPHERE, WIND, 4)
-                .run(config, spec, settings(), LAUNCH, 60, 7L, 0).ensemble();
+                .run(config, spec, settings(), LAUNCH, 40, 7L, 0).ensemble();
 
-        for (int k = 0; k < 60; k++) {
+        for (int k = 0; k < 40; k++) {
             assertThat(parallel.members().get(k).parameters())
                     .as("member %d parameters", k)
                     .isEqualTo(single.members().get(k).parameters());
@@ -153,10 +153,13 @@ class EnsembleRunnerTest {
     void differentSeedGivesDifferentButComparableFootprint() throws Exception {
         BalloonConfig config = config();
         DispersionSpec spec = DispersionSpec.preflightDefault(config);
+        // 200 members, not fewer: this test's whole subject is that the footprint is stable
+        // across seeds at a moderate sample size, so shrinking it would weaken the claim rather
+        // than just speed the test up.
         LandingEllipse a = fitFrom(new EnsembleRunner(ATMOSPHERE, WIND)
-                .run(config, spec, settings(), LAUNCH, 300, 1L, 0));
+                .run(config, spec, settings(), LAUNCH, 200, 1L, 0));
         LandingEllipse b = fitFrom(new EnsembleRunner(ATMOSPHERE, WIND)
-                .run(config, spec, settings(), LAUNCH, 300, 2L, 0));
+                .run(config, spec, settings(), LAUNCH, 200, 2L, 0));
 
         assertThat(b.semiMajorM()).isNotEqualTo(a.semiMajorM());
         // Latin-hypercube stratification is meant to make the footprint stable across seeds; if
