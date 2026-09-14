@@ -23,26 +23,37 @@ and a 45 km ascent with ~400 km of drift.
 
 ## Current Progress
 
-**Design is complete; no code has been written yet.** Nothing has been committed to a repo —
-this folder is the entire state of the project.
+**The MVP cut-line is built, green and tagged `v0.1-mvp`.** Handoff steps 1–5 are complete:
+scaffold → domain → atmosphere and integrators → flight dynamics and wind → persistence → CLI.
 
-Files in this handoff package:
+A fresh clone plus a JDK runs the whole path offline in three commands. `./mvnw verify` passes
+with the JaCoCo gate. `./scripts/run.sh validate` reports **84 checks, 84 passed**.
 
-| File | Contents |
-|---|---|
-| `CLAUDE.md` | Project constitution — hard rules, stack, commands, coding conventions, definition of done. Copy to the repo root so Claude Code loads it automatically. |
-| `docs/BLUEPRINT.md` | The full specification: objectives O1–O6, FR-1.1…FR-4.4, NFR-1…NFR-6, UC-1…UC-5, ADR-1…ADR-10, class inventory, datasets DS-1…DS-7, evaluation methodology, test plan with T- IDs, traceability matrix, 10-week timeline. Mermaid and PlantUML diagram sources are embedded. |
-| `docs/schema/V1__init.sql` | The 12-table SQLite schema, ready to drop into `src/main/resources/schema/`. Physics is enforced as CHECK constraints. |
+### What exists
 
-Decisions already locked (full rationale in `docs/BLUEPRINT.md` §14):
+| Layer | Classes | Verified by |
+|---|---|---|
+| `domain` (+ `domain.error`) | `GeoPoint`, `BalloonState`, `StateHistory`, `Phase`, `LiftGas`, `BalloonConfig` + Builder, `FlightParameters`, `SimSettings`, `Units`, `Geodesy`, six-type exception hierarchy | T-U-GEO, T-U-BUILDER, T-E1 |
+| `core.atmos` | `AtmosphereModel`, `Ussa1976Atmosphere`, `ExponentialAtmosphere`, `WindField`, `ConstantWindField`, `SoundingWindField`, `WindFieldFactory`, `SoundingLevel`, `WindSample` | **T-V1**, T-U-ATMOS, T-U-WIND |
+| `core.flight` | `Integrator`, `Rk4Integrator`, `Rkf45Integrator`, `IntegratorFactory`, `FlightPhase`, `AscentPhase`, `DescentPhase`, `FlightSimulator` | T-U-INTEG, **T-V2**, **T-V3**, **T-V4** |
+| `persistence` | `Database`, `SchemaInitializer`, `Repository<T,K>`, `MissionDao`, `BalloonConfigDao`, `SoundingDao`, `RunDao`, `RunStateDao`, `ValidationDao` | T-D1, T-D3, T-D4, **T-S1** |
+| `io` | `SoundingReader`, `WyomingSoundingReader`, `ConfigLoader`, `CsvWriter`, `GeoJsonWriter` | T-E3, FR-1.1 suite |
+| `app` | `RunContext`, `IngestService`, `PredictionService`, `ValidationService` | T-U1 |
+| `cli` | `SkyfixCli`, `ConsoleReporter`, `Main` | T-U1, T-E1, T-E3 |
 
-- US Standard Atmosphere 1976, hand-written, 0–86 km (ADR-1)
-- SQLite + plain JDBC + hand-written DAOs, no ORM (ADR-2)
-- Bootstrap particle filter for parameter estimation, not EKF/UKF (ADR-3)
-- Replay-only telemetry ingest; no live serial or radio in `src/main` (ADR-4)
-- Explicit `ExecutorService` fixed pool; one derived seed per ensemble member (ADR-5, ADR-6)
-- Single-sounding wind field, with the error absorbed into the dispersion (ADR-7)
-- CLI plus exported PNG charts; Swing is Stretch only (ADR-8)
+### Measured results
+
+| Case | Tolerance | Measured |
+|---|---|---|
+| T-V1 USSA-1976 at 25 altitudes | 0.1% relative | **T 0.0008%, p 0.0096%, ρ 0.0107%** |
+| T-V2 ascent rate vs analytic terminal velocity | 2% | **worst 0.017%** |
+| T-V3 RK4 vs RKF45 landing, dt 0.5/0.25/0.125 s | 50 m | **0.0025 / 0.000085 / 0.0000048 m** |
+| T-V4 gas-law mass invariant | 1e-6 | **7.9e-16** |
+| Coverage, `core.atmos` / `core.flight` | 80% | **100% / 96.4%** |
+
+Two blueprint `verify:` items are now measured rather than estimated:
+**ADR-9** haversine vs Vincenty at ~400 km = **0.327%**; **ADR-1** a best-fit exponential
+atmosphere is **20.4%** off in density at the tropopause and **48.3%** off by 35 km.
 
 ## What Worked
 
@@ -51,83 +62,84 @@ Decisions already locked (full rationale in `docs/BLUEPRINT.md` §14):
 - **Anchoring validation on published references.** The USSA-1976 tables, the analytic
   buoyancy–drag terminal velocity and the drag-free closed forms give real oracles, so the
   tests check correctness rather than self-consistency.
-- **Building the evaluation set from a seeded generator (DS-6).** No real 30 km or 45 km flight
-  has flown yet, so 20 synthetic flights with known truth carry O3 and O4 — and they regenerate
-  deterministically from `data/truth/seeds.csv`.
-- **An MVP cut-line that is submittable on its own** (ingest → atmosphere → one flight →
-  persistence → CSV export, target end of week 4). If the estimator slips, there is still a
-  complete project.
+- **Independent oracles wherever the obvious check would be circular.** T-U-GEO asserts five
+  separations that are exact multiples of the earth radius and cross-checks against the
+  spherical law of cosines; ADR-9's error term is measured against a Vincenty implementation
+  written in the test file; the T-V1 reference table came from two independent third-party
+  implementations of the standard that agree to 0.00987%. Each of these caught or quantified
+  something a self-consistency check would have passed.
+- **Enforcing the hard rules mechanically.** `SourceRulesTest` scans `src/main` for concatenated
+  SQL, scientific-library imports, network imports, package cycles, missing Javadoc and missing
+  `verify:` markers. It made the codebase comply rather than the reverse — two DAOs were
+  rewritten to use whole SQL literals because `"SELECT " + COLUMNS + " FROM run"` is still SQL
+  assembled from parts.
+- **An MVP cut-line that is submittable on its own.** Reached on schedule; if the estimator
+  slips there is still a complete project.
 
 ## What Didn't Work
 
-Nothing has failed yet — no code exists. Recorded here so the next agent does not re-litigate
-the options that were already considered and rejected during design:
+Design-stage rejections (do not re-litigate): Orekit/Commons Math for the maths; GFS/GRIB2 4-D
+wind fields; EKF or UKF instead of a particle filter; live serial ingest in `src/main`; a
+singleton database connection; a GUI from week 1. Rationale is in `docs/BLUEPRINT.md` §14.
 
-- **Orekit or Apache Commons Math for the maths.** Rejected: the course rewards my own
-  implementation, and a library core would gut the marks for implementation quality. Write the
-  integrator, the interpolation, the LHS sampler and the eigen-decomposition by hand.
-- **GFS/GRIB2 4-D wind fields.** Rejected: GRIB2 decoding is a term project by itself and would
-  require a download, breaking the offline rule. A single sounding plus a `wind_scale`
-  dispersion parameter covers the error honestly.
-- **EKF or UKF instead of a particle filter.** Rejected: burst is a hard discontinuity in the
-  dynamics and the pre-burst posterior can be bimodal; Jacobians across the phase switch are
-  ugly and fragile.
-- **Live serial ingest from the ESP32 flight computer.** Rejected for `src/main`: a grader with
-  no hardware must still be able to exercise the primary use case.
-- **Singleton for the database connection.** Rejected: hides lifetime and breaks per-test
-  isolation. Construct `Database` once in `Main` and inject it.
-- **A GUI from week 1.** Rejected: no GUI toolkit appears in the lab record, and the marks come
-  from the computational core, not the widgets.
+Things the implementation itself disproved:
+
+- **T-V3 at dt = 1 s does not hold, and the tolerance was never the problem.** Quadratic drag
+  linearises to a real eigenvalue whose magnitude grows as the payload falls into denser air,
+  reaching ~3.6 /s near the ground; RK4's real-axis stability limit of 2.785 caps the step at
+  ~0.77 s there. At 1 s the landing came out 39 s late, ~470 m off in a 12 m/s wind, with the
+  descent rate visibly oscillating. The default step is now 0.25 s, the simulator **refuses**
+  any unstable step naming the largest that would work, and each integrator derives its own
+  limit from itself. See **ADR-13**. This is the binding constraint on NFR-1 — see below.
+- **Free lift and launch diameter are redundant inputs.** Free lift wins, because it is what the
+  filter estimates and what a crew measures. See **ADR-11**.
+- **A silent drop in the sounding parser.** A line opening with `-` was classified as a header
+  and skipped, so a negative pressure was never reported — exactly the silent drop FR-1.1
+  forbids. Found by writing the negative test, not by reading the code.
+- **`run` does not cascade from `mission`, deliberately.** The first T-D3 asserted a cascade
+  that would have destroyed the provenance record NFR-5 exists to keep.
 
 ## Next Steps
 
-Work in order. Do not start step 5 before step 4 is green.
+Work in order. The MVP is tagged, so everything below is additive.
 
-1. **Scaffold the repo at `C:\Projects\SKYFIX`** (or `~/Projects/skyfix`). `git init`, then
-   copy `CLAUDE.md` to the root, `docs/BLUEPRINT.md` to `docs/`, and
-   `docs/schema/V1__init.sql` to `src/main/resources/schema/`. Create the Maven project:
-   groupId `com.skyfix`, artifactId `skyfix`, Java 21, Maven Wrapper committed
-   (`mvn -N wrapper:wrapper`). Dependencies: `sqlite-jdbc`, `jackson-databind`, `xchart`
-   (verify current versions), test scope `junit-jupiter` and `assertj-core`, plugin `jacoco`.
-   Add `.gitignore` (`target/`, `out/`, `*.db`, `*.db-journal`, `.idea/`, `*.iml`, `*.log`)
-   and `.github/workflows/build.yml` running `./mvnw -B verify` on JDK 21.
-   Commit: `chore: project scaffold, Maven wrapper, CI`.
+1. **`DispersionSampler` (Latin hypercube over 5 parameters), `EnsembleRunner`, `EllipseFitter`
+   (covariance eigen-decomposition by hand), T-P1, T-U-LHS, T-U-ELLIPSE.** Week 5, tag
+   `v0.2-ensemble`.
+   **Read ADR-13 first.** A single flight is ~50 ms at dt = 0.25 s, so 1,000 members is ~50 s
+   single-threaded. NFR-1's 30 s budget on 4 cores is reachable but no longer comfortable, and
+   the 0.25 s step is not negotiable downward. Measure T-P1 early; if it misses, the honest
+   options are a coarser `stateSampleStride`, a larger pool, or restating NFR-1 with the
+   stability constraint as the reason — not a bigger step.
+2. **`PlotExporter` (PL-1, PL-2), `ConsoleReporter` tables, T-U1 extension.** Week 6, tag
+   `v0.2-ensemble`.
+3. **`SyntheticFlightWriter` + 20 truth flights from `data/truth/seeds.csv`, `CsvTelemetryReader`,
+   `BurstDetector` + T-E2.** Week 7.
+4. **`ParticleFilter`, `GaussianMeasurementModel`, `SystematicResampler`, `ReplayService`, T-V5.**
+   Week 8, tag `v0.3-estimator`. Do not start before the ensemble runner is green.
+5. **`ReportService`, T-V6, T-V7, PL-3…PL-6, coverage to 80% on `estimation`.** Week 9, tag
+   `v0.4-validated`.
+6. **Report, screenshots SC-1…SC-10, compliance checklist.** Week 10, tag `v1.0-submission`.
 
-2. **Create the 10 packages and the `domain` layer** — `GeoPoint`, `BalloonState`,
-   `BalloonConfig` with its Builder and every cross-field rule from FR-1.3, `FlightParameters`,
-   `SimSettings`, `DispersionSpec`, `StateHistory`, `Phase`, `Units` (overloaded converters),
-   `Geodesy` (haversine + bearing), and the six-type `SkyfixException` hierarchy.
-   Tests: `T-U-GEO`, `T-U-BUILDER` (one negative test per rule). Commit per logical group.
+**Standing constraints:** no scientific libraries in `src/main`, no network in any test, SI units
+internally, `PreparedStatement` only, requirement ID in every commit body, and a green commit
+every week — a single bulk upload at the end forfeits 10% of the grade.
 
-3. **`Ussa1976Atmosphere` + `T-V1`.** Transcribe the 7 layer bases, then write
-   `data/reference/ussa1976.csv` with 25 rows of T, p, ρ from the published tables and assert
-   ≤0.1% relative error. Add `ExponentialAtmosphere` for comparison. Then `Integrator`,
-   `Rk4Integrator`, `IntegratorFactory` with `T-U-INTEG` against `y' = -ky`.
-   **This is the first real gate — do not move on until T-V1 passes.**
+## Unverified items — must be cleared before the report
 
-4. **Flight dynamics** — `FlightPhase` (Template Method), `AscentPhase`, `DescentPhase`,
-   `FlightSimulator`. Then `T-V2` (analytic terminal ascent rate at 5 altitudes, ≤2%) and
-   `T-V4` (gas-law invariant drift <1e-6). Add `WyomingSoundingReader` and `SoundingWindField`
-   with `ConstantWindField` as the analytic test oracle.
+These carry literal `verify:` or `[PLACEHOLDER — …]` markers in the tree; `grep -rn "verify:" src data docs`
+finds them all.
 
-5. **Persistence** — `Database`, `SchemaInitializer` (applies `V1__init.sql` idempotently and
-   records `schema_version`), `Repository<T,K>` and the 8 DAOs. Tests `T-D1`, `T-D3`, `T-D4`,
-   plus `T-S1` scanning `src/main` for concatenated SQL. Then wire `IngestCommand`,
-   `PredictCommand` and `ValidateCommand` through `SkyfixCli`.
-   **Tag `v0.1-mvp` here** — at this point the project is already submittable.
+| Item | Where | What is needed |
+|---|---|---|
+| **DS-3 reference table** | `data/reference/ussa1976.csv` header | Hand-transcribe from NOAA-S/T 76-1562 Table I. The current rows come from two independent implementations agreeing to 0.00987%, which corroborates but is not the primary source. The archive was unreachable from the build environment. |
+| **DS-1 real soundings** | `data/soundings/` | The committed profile is **synthetic and labelled as such**. Fetch three real cached soundings and confirm the University of Wyoming column layout and terms of use. |
+| **Lifting-gas molar masses** | `LiftGas.java` | Cite IUPAC standard atomic weights. |
+| **Burst-diameter figures (DS-4)** | `data/missions/balloon.json` | Check against the Totex/Kaymont datasheet. |
+| **EGM96 geoid offset** | `data/missions/mission.json` | Confirm the undulation for the launch region. |
+| **Sphere drag-crisis Re range** | BLUEPRINT §10 | Confirm before quoting "Cd is roughly flat". |
+| **DGCA/AAI rules** | BLUEPRINT §5 | Confirm requirements for unmanned free balloons in India. |
+| **LHS convergence claim** | BLUEPRINT §10 | "~400 members vs ~1,500 for plain MC" must be measured, not repeated. |
+| **Screenshots SC-1…SC-10** | `README.md`, `docs/screenshots/` | Capture after `v0.4-validated`. |
 
-6. Continue with the week 5–10 plan in `docs/BLUEPRINT.md` §15: ensemble and ellipse (W5),
-   plots and exports (W6), synthetic flights and burst detection (W7), particle filter and
-   replay (W8), scoring and coverage (W9), report and screenshots (W10).
-
-**Standing constraints while doing any of the above:** no scientific libraries in `src/main`,
-no network in any test, SI units internally, `PreparedStatement` only, requirement ID in every
-commit body, and a green commit every week — a single bulk upload at the end forfeits 10% of
-the grade.
-
-**Unverified items to check before they reach the report** (currently marked `verify:` in the
-blueprint): the University of Wyoming and NOAA IGRA access terms and file layouts; Totex/Kaymont
-burst-diameter figures; the EGM96 geoid offset for the launch region; the sphere drag-crisis Re
-range; the haversine-vs-Vincenty difference at 400 km; DGCA/AAI rules for unmanned free balloons
-in India; and current versions of `sqlite-jdbc`, Jackson and XChart. Never write a citation,
-DOI or URL from memory.
+Never write a citation, DOI or URL from memory.
