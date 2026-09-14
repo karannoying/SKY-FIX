@@ -359,7 +359,7 @@ score it with no code change.
 
 | Choice | Candidates | Selected | Trade-off |
 |---|---|---|---|
-| Atmosphere | Exponential · **USSA-1976** · NRLMSISE-00 | USSA-1976 | Exponential is ~10% off near the tropopause and that maps almost linearly into ascent rate; NRLMSISE-00 needs space-weather indices (network) and only matters above ~90 km |
+| Atmosphere | Exponential · **USSA-1976** · NRLMSISE-00 | USSA-1976 | **Measured** by `AtmosphereComparisonTest`: a best-fit single-scale-height exponential (H = 7.64 km) is 20.4% off in density at the tropopause and up to 48.3% off by 35 km. Buoyancy and drag are both linear in density, so that passes almost directly into ascent rate — an order of magnitude outside the 2% T-V2 tolerance. NRLMSISE-00 needs space-weather indices (network) and only matters above ~90 km |
 | Wind | Constant · **single sounding, linear in height, nearest in time** · GFS GRIB2 4-D | Sounding interpolation | GRIB2 parsing is a term project by itself and needs a download; the systematic error (profile assumed to hold along 400 km) is absorbed into the `wind_scale` dispersion and reported, not hidden |
 | Ascent drag | **Constant Cd** · Re-dependent correlation · CFD | Constant Cd, estimated | Balloon Re is 1e5–1e6 where sphere Cd is roughly flat (verify: drag-crisis Re range); more importantly Cd is *estimated* from telemetry, so a fitted constant beats an unfitted correlation |
 | Burst | **Diameter threshold × estimated scale** · stress-based envelope model | Threshold + `burst_scale` | Stress model needs latex material data I do not have; the scale factor makes the manufacturer figure a prior rather than a truth |
