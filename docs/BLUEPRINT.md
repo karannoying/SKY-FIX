@@ -325,7 +325,7 @@ Due by the `v0.1-mvp` tag and regenerated whenever those types change.
 ## 9 · Storage
 
 Schema: `src/main/resources/schema/V1__init.sql` (copy shipped at `docs/schema/V1__init.sql`).
-12 tables: `schema_version`, `mission`, `balloon_config`, `sounding`, `sounding_level`,
+13 tables: `schema_version`, `mission`, `balloon_config`, `sounding`, `sounding_level`,
 `flight_log`, `telemetry_sample`, `run`, `ensemble_member`, `run_state`, `estimate`,
 `landing_ellipse`, `validation_result`.
 
@@ -516,7 +516,7 @@ commands with no network.
 | ADR-6 | One derived seed per member (`SplittableRandom.split()`) | shared synchronised `Random`; `ThreadLocalRandom` | A shared RNG makes results depend on thread interleaving and breaks T-R1 | Member *k* reproducible in isolation — debugging an outlier is trivial |
 | ADR-7 | Single-sounding wind field | GFS GRIB2; ERA5 | GRIB2 plus a mandatory download violates the offline rule and would eat the budget | Named, quantified error source; `wind_scale` dispersion widens the ellipse to cover it |
 | ADR-8 | CLI + exported PNG charts | JavaFX; Swing from week 1 | No GUI in the lab record; screenshots come from the PNGs and console tables | Stretch Swing view attaches as a `RunListener` with no service changes |
-| ADR-9 | Spherical-Earth advection, haversine scoring | full WGS-84 geodesic; flat Earth | Over ~400 km the difference is a few tenths of a percent (verify: compute haversine vs Vincenty at 400 km and report the number), far below wind error | Measured difference reported as a bounded error term; swapping in a geodesic is a one-class change |
+| ADR-9 | Spherical-Earth advection, haversine scoring | full WGS-84 geodesic; flat Earth | **Measured:** over the three ~400 km mission-scale pairs in `GeodesyTest`, haversine differs from a Vincenty inverse solution on the WGS-84 ellipsoid by at most **0.327%**, far below the wind-field error that dominates the prediction | Measured difference reported as a bounded error term; swapping in a geodesic is a one-class change. The figure is re-measured by `GeodesyTest.sphericalErrorAgainstVincentyOverMissionScale` on every build, so it cannot drift |
 | ADR-10 | Config identity by SHA-256 on every run | config id only | A run is reproducible only if the exact config is pinned | Any whitespace edit makes a new hash — intended, documented in the README |
 
 ## 15 · Timeline (60 h / 10 weeks)
