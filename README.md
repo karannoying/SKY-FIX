@@ -24,7 +24,7 @@ The particle-filter estimator is specified in `docs/BLUEPRINT.md` and is not imp
 | CLI: `ingest`, `predict`, `validate`, `version` | done, validated by T-U1, T-E1 |
 | Monte Carlo ensemble + 50/95% ellipse (FR-2.4) | done, validated by T-U-LHS, T-U-ELLIPSE, T-P1, T-R1 |
 | Particle-filter parameter estimation (FR-3.x) | **not yet** — week 8 |
-| PNG plots (FR-4.2) | **not yet** — week 6 |
+| PNG plots PL-1, PL-2, PL-6 (FR-4.2) | done, validated by `PlotExporterTest` |
 
 ## Requirements
 
@@ -57,7 +57,18 @@ scripts\run.cmd predict --mission data\missions\mission.json --balloon data\miss
 `predict` writes `out/run-<id>/` containing `trajectory.csv`, `summary.csv` and `flight.geojson`
 (drop the GeoJSON onto any map to see the track, burst point and landing point). With `--members`
 it also writes `landing-scatter.csv`, `ellipses.csv` and `footprint.geojson`, the last holding each
-confidence ellipse as a polygon alongside every member's landing point. Per-run detail goes
+confidence ellipse as a polygon alongside every member's landing point, plus two charts:
+`pl1-altitude.png` (altitude against time, ensemble behind the nominal flight) and
+`pl2-footprint.png` (the landing scatter with both ellipses). `validate --plots` adds
+`pl6-atmosphere-residual.png`, which shows how the atmosphere model's error behaves with altitude
+rather than as the single worst-case number T-V1 reports.
+
+**Reading PL-2.** Its axes share a scale, so the ellipse has its true shape. Under the synthetic
+sounding shipped in `data/soundings/`, whose wind veers only about 40° over the whole profile, the
+footprint comes out extremely elongated — roughly 180:1 — because almost all the uncertainty is in
+how long the balloon stays airborne, and that lands along one axis. A real sounding veers more and
+gives a rounder footprint. The sliver is the data's shape, not a plotting fault; the chart could
+only hide it by distorting the axes. Per-run detail goes
 to `out/skyfix.0.log`; the console carries warnings and above.
 
 ### Exit codes

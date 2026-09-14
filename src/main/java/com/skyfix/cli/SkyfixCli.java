@@ -192,6 +192,11 @@ public final class SkyfixCli {
         List<ValidationResult> results = service.runAll();
         long failures = reporter.printValidationTable(results, service.notYetImplemented());
 
+        if (options.containsKey("plots")) {
+            Path plot = service.exportResidualPlot(Path.of(options.getOrDefault("out", "out")));
+            reporter.info("  residual plot  " + plot);
+        }
+
         // Persisting the table means report §11 is a query against a run rather than a
         // screenshot that has to be retaken whenever the model changes (FR-4.4).
         if (options.containsKey("db")) {
@@ -323,6 +328,8 @@ public final class SkyfixCli {
 
                   validate   run the reference-case suite; exits non-zero on any breach
                     --db       <file>            also persist the results to this database
+                    --plots                      also export PL-6, the atmosphere residual chart
+                    --out      <dir>             where to write it (default: out)
 
                   version    print the version, schema version and git SHA
 

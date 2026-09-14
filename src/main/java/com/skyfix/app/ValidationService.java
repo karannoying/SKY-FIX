@@ -18,6 +18,7 @@ import com.skyfix.domain.SimSettings;
 import com.skyfix.domain.StateHistory;
 import com.skyfix.domain.Units;
 import com.skyfix.domain.error.SkyfixException;
+import com.skyfix.io.PlotExporter;
 import com.skyfix.persistence.ValidationResult;
 
 import java.io.IOException;
@@ -180,6 +181,26 @@ public final class ValidationService {
         }
         return List.of(ValidationResult.absolute("T-V4",
                 "gas-law mass invariant, worst relative drift", worst, 0.0, "1", 1e-6));
+    }
+
+    /**
+     * Writes PL-6, the atmosphere residual chart, from the same rows T-V1 checks.
+     *
+     * <p>T-V1 reports one worst-case figure; the chart shows how the error behaves with altitude,
+     * which is what says whether the model is uniformly good or only good on average.
+     *
+     * @param outputDir where to write the chart
+     * @return the file written
+     * @throws SkyfixException if the reference table cannot be read or the chart cannot be written
+     */
+    public Path exportResidualPlot(Path outputDir) throws SkyfixException {
+        List<double[]> rows = new ArrayList<>();
+        for (String line : readReference()) {
+            String[] f = line.split(",");
+            rows.add(new double[]{Double.parseDouble(f[0]), Double.parseDouble(f[1]),
+                    Double.parseDouble(f[2]), Double.parseDouble(f[3])});
+        }
+        return PlotExporter.exportAtmosphereResidual(outputDir, atmosphere, rows, 0.001);
     }
 
     /**

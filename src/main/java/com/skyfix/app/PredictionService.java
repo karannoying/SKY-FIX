@@ -19,6 +19,7 @@ import com.skyfix.domain.StateHistory;
 import com.skyfix.domain.error.SkyfixException;
 import com.skyfix.io.CsvWriter;
 import com.skyfix.io.GeoJsonWriter;
+import com.skyfix.io.PlotExporter;
 import com.skyfix.persistence.Database;
 import com.skyfix.persistence.EllipseDao;
 import com.skyfix.persistence.EnsembleDao;
@@ -214,6 +215,9 @@ public final class PredictionService {
             CsvWriter.writeEllipses(runDir.resolve("ellipses.csv"), run.id(), ellipses);
             GeoJsonWriter.writeFlight(runDir.resolve("flight.geojson"), nominal);
             GeoJsonWriter.writeFootprint(runDir.resolve("footprint.geojson"), ellipses, ensemble);
+            List<Path> plots = PlotExporter.exportEnsemblePlots(runDir, nominal,
+                    result.histories(), ensemble, ellipses, mission.launch());
+            LOG.info(() -> "wrote " + plots.size() + " plots to " + runDir);
 
             runs.finish(run.id(), context.elapsedMs(), RunRecord.OK);
 
