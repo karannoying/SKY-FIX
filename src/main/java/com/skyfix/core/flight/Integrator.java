@@ -43,4 +43,42 @@ public interface Integrator {
     default double lastErrorEstimate() {
         return Double.NaN;
     }
+
+    /**
+     * The largest {@code |lambda| h} this method stays stable at on the negative real axis.
+     *
+     * <p>Parachute descent is a stiff, strongly damped problem: the drag force linearises to a
+     * real negative eigenvalue {@code lambda = -rho Cd A |v| / m}, and that damping gets faster as
+     * the payload falls into denser air. An explicit method whose step exceeds this limit does not
+     * merely lose accuracy, it oscillates — which is what {@code FlightSimulator} uses this number
+     * to refuse (see ADR-13).
+     *
+     * <p>The value is <em>measured from the method itself</em> rather than transcribed: the
+     * integrator is applied to {@code y' = lambda y} with unit step, which yields exactly the
+     * method's stability function {@code R(lambda)}, and the boundary {@code |R| = 1} is found by
+     * bisection. So it stays correct for any integrator added later, with no table to maintain.
+     *
+     * @return the stability boundary, a positive dimensionless number
+     */
+    default double realAxisStabilityLimit() {
+        // R(z) for an explicit RK method is what one unit step of y' = z y returns from y = 1.
+        java.util.function.DoubleUnaryOperator amplification = z -> {
+            try {
+                return step(0.0, new double[]{1.0}, 1.0, (t, y) -> new double[]{z * y[0]})[0];
+            } catch (SkyfixException e) {
+                throw new IllegalStateException("linear test problem cannot fail", e);
+            }
+        };
+        double stable = -0.1;                       // |R| < 1 here for every usable method
+        double unstable = -10.0;                    // and > 1 here
+        for (int i = 0; i < 200; i++) {
+            double mid = 0.5 * (stable + unstable);
+            if (Math.abs(amplification.applyAsDouble(mid)) <= 1.0) {
+                stable = mid;
+            } else {
+                unstable = mid;
+            }
+        }
+        return Math.abs(stable);
+    }
 }

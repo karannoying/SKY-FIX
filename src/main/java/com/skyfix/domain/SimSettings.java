@@ -25,8 +25,8 @@ public final class SimSettings {
     }
 
     /**
-     * Starts a new builder with the documented defaults: RK4, a 1 s step, a 6 h ceiling on flight
-     * time, sea-level ground and every 10th state retained.
+     * Starts a new builder with the documented defaults: RK4, a 0.25 s step (see ADR-13 for why
+     * not 1 s), a 6 h ceiling on flight time, sea-level ground and every 10th state retained.
      *
      * @return a builder holding the defaults
      */
@@ -110,7 +110,12 @@ public final class SimSettings {
     /** Collects and validates integration settings. */
     public static final class Builder {
 
-        private double stepSeconds = 1.0;
+        /**
+         * Default step, seconds. Chosen from the descent stability criterion, not by habit:
+         * RK4 at a 1 s step leaves its stability region below roughly 6 km on a typical
+         * parachute descent and oscillates (ADR-13). 0.25 s leaves about a threefold margin.
+         */
+        private double stepSeconds = 0.25;
         private String integrator = "RK4";
         private double endSeconds = 6.0 * 3600.0;
         private double groundElevationM = 0.0;

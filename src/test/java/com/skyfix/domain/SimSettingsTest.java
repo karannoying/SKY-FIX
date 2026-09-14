@@ -15,9 +15,11 @@ class SimSettingsTest {
     void defaultsBuild() throws Exception {
         SimSettings s = SimSettings.builder().build();
         assertThat(s.integrator()).isEqualTo("RK4");
-        assertThat(s.stepSeconds()).isEqualTo(1.0);
+        // 0.25 s, not 1 s: RK4 leaves its stability region partway down a parachute descent at a
+        // 1 s step, so the default carries about a threefold margin (ADR-13).
+        assertThat(s.stepSeconds()).isEqualTo(0.25);
         assertThat(s.stateSampleStride()).isGreaterThanOrEqualTo(1);
-        assertThat(s.toString()).contains("RK4").contains("dt=1.0");
+        assertThat(s.toString()).contains("RK4").contains("dt=0.25");
     }
 
     @Test

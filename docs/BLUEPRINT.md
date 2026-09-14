@@ -95,8 +95,10 @@ GUI (Swing shell is Stretch); multi-user or networked deployment.
 - **FR-2.3 Flight integration** — in: `BalloonConfig` + `WindField` + `SimSettings(dt, integrator,
   tEnd)` → gas-law envelope expansion, vertical ODE of buoyancy − weight − drag, horizontal
   advection, burst when diameter ≥ burst diameter, parachute descent → `StateHistory` + landing
-  point. **Accept:** RK4 and RKF45 agree within 50 m of landing position at dt ≤ 1 s (T-V3);
-  `dt ≤ 0` or `tEnd ≤ t0` raises `ValidationException` naming the field.
+  point. **Accept:** RK4 and RKF45 agree within 50 m of landing position at every stable dt ≤ 1 s
+  (T-V3); `dt ≤ 0` or `tEnd ≤ t0` raises `ValidationException` naming the field; a step outside the
+  integrator's stability region raises `ConvergenceException` naming the largest stable step
+  (ADR-13) rather than returning a plausible but wrong landing point.
 - **FR-2.4 Monte Carlo ensemble** — in: nominal config + dispersion spec (free lift, ascent Cd,
   burst diameter, parachute Cd, wind-error scale) + N + seed → Latin-hypercube sample, run on a
   fixed thread pool, aggregate by covariance eigen-decomposition → landing scatter, mean,
@@ -364,7 +366,7 @@ score it with no code change.
 | Ascent drag | **Constant Cd** · Re-dependent correlation · CFD | Constant Cd, estimated | Balloon Re is 1e5–1e6 where sphere Cd is roughly flat (verify: drag-crisis Re range); more importantly Cd is *estimated* from telemetry, so a fitted constant beats an unfitted correlation |
 | Burst | **Diameter threshold × estimated scale** · stress-based envelope model | Threshold + `burst_scale` | Stress model needs latex material data I do not have; the scale factor makes the manufacturer figure a prior rather than a truth |
 | Descent | **Constant-Cd parachute** · Mach/Re-dependent Cd | Constant, estimated | Descent above 25 km is drag-limited and fast; landing point is dominated by wind advection in the last 10 km |
-| Integrator | Euler · **RK4** · RKF45 · symplectic | RK4 default, RKF45 available | Euler needs dt < 0.1 s for the same accuracy and kills NFR-1; RKF45 gives the error estimate and the T-V3 cross-check; symplectic buys nothing for a dissipative system |
+| Integrator | Euler · **RK4** · RKF45 · symplectic | RK4 default at dt = 0.25 s, RKF45 available | Euler needs dt < 0.1 s for the same accuracy and kills NFR-1; RKF45 gives the error estimate and the T-V3 cross-check; symplectic buys nothing for a dissipative system. **Measured (ADR-13):** the step is bounded by absolute stability on the parachute descent, not by accuracy — drag damping reaches ~3.6 /s near the ground, and RK4's real-axis limit of 2.785 caps the step at ~0.77 s there |
 | Estimator | EKF · UKF · **particle filter** · batch least squares | Bootstrap PF with jitter | Burst is a hard discontinuity and the pre-burst posterior can be bimodal; no Jacobians needed; batch LSQ cannot answer mid-flight. Cost capped at 500 particles to hold FR-3.3 |
 | Sampling | **Latin hypercube** · plain MC · Sobol | LHS over 5 parameters | LHS reaches a stable 95% ellipse in ~400 members where plain MC needs ~1,500 (verify: measure and report the actual convergence) |
 
@@ -374,7 +376,7 @@ score it with no code change.
 |---|---|---|
 | T-V1 | USSA-1976 T, p, ρ at 25 altitudes 0–47 km (DS-3) | ≤0.1% relative each |
 | T-V2 | Analytic buoyancy–drag terminal ascent rate at 5 altitudes | ≤2% |
-| T-V3 | RK4 vs RKF45 landing separation, dt ≤ 1 s, same seed | ≤50 m |
+| T-V3 | RK4 vs RKF45 landing separation, at every **stable** dt ≤ 1 s, same seed (0.5, 0.25, 0.125 s) | ≤50 m — **measured 0.003 m, 0.000 m, 0.000 m**. See ADR-13: RK4 at dt = 1 s is outside its absolute-stability region for the last few km of descent and is refused by the simulator |
 | T-V4 | Gas-law mass/volume invariant over a full flight | <1e-6 relative drift |
 | T-V5 | Parameter recovery, 20 DS-6 flights with known truth | Cd ≤5%, burst altitude ≤500 m, in ≥18/20 |
 | T-V6 | Live vs frozen landing error, same 20 flights | median reduction ≥30% |

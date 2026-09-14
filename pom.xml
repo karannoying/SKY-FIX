@@ -75,6 +75,9 @@
           <!-- Tests must never reach the network (CLAUDE.md rule 2). -->
           <systemPropertyVariables>
             <skyfix.offline>true</skyfix.offline>
+            <java.util.logging.config.file>
+              ${project.basedir}/src/test/resources/logging.properties
+            </java.util.logging.config.file>
           </systemPropertyVariables>
         </configuration>
       </plugin>
