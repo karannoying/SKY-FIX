@@ -55,6 +55,7 @@ with the JaCoCo gate. `./scripts/run.sh validate` reports **84 checks, 84 passed
 | T-P1 1,000 members, 4 cores, sounding wind | 30 s | **5.84 s** (3-run median) |
 | T-P2 200-member re-prediction | 5 s | **1.05 s** |
 | T-R1 same seed, 1 vs 4 threads | 1e-9 | **met** |
+| FR-4.2 chart export | 5 s | **100 ms** |
 | Coverage, `core.atmos` / `core.flight` | 80% | **100% / 96.4%** |
 
 **Measure timing with `-Pperf` only, and with nothing else on the machine.** T-P1's first reading
@@ -116,6 +117,11 @@ Things the implementation itself disproved:
   wasted objects per 1,000-member run, at 16.6 s against 9.7 s once members outside the retention
   sample stopped sampling states at all.
 - **A performance figure measured under instrumentation is not a performance figure.** See ADR-15.
+- **Charts need looking at, not just testing.** Three PL-1/PL-2 defects — every line silently
+  dashed by XChart's default style cycling, a footprint framed on a launch site 143 km away, and a
+  title clipped at both ends — all passed the automated checks and were only caught by rendering
+  the images and reading them. `PlotExporterTest` now at least catches a blank panel and a series
+  drawn in the wrong colour; the rest still needs eyes.
 
 ## Next Steps
 
@@ -127,13 +133,19 @@ Work in order. The MVP is tagged, so everything below is additive.
    wind field. T-P2 is 1,054 ms against 5 s.
    An earlier note here warned that the budget was tight, on the basis of a ~50 ms-per-flight
    figure taken from a cold JVM. Warm, a flight costs about 18 ms. Disregard the warning.
-2. **`PlotExporter` (PL-1, PL-2), `ConsoleReporter` tables, T-U1 extension.** Week 6.
-   PL-1 is altitude vs time with the ensemble band; PL-2 is the landing scatter with the 50/95%
-   ellipses. Both have their data already: `out/run-<id>/trajectory.csv`,
-   `landing-scatter.csv` and `ellipses.csv` are written on every `--members` run, so the plotting
-   work is XChart wiring rather than new computation.
+2. ~~`PlotExporter` (PL-1, PL-2), T-U1 extension.~~ **Done**, plus PL-6. Charts render in 100 ms
+   against the 5 s budget. See ADR-16 for the design decisions, and read it before adding PL-3
+   to PL-5 so the new charts match: validated colour, one axis, solid lines, muted chrome for
+   thresholds.
 3. **`SyntheticFlightWriter` + 20 truth flights from `data/truth/seeds.csv`, `CsvTelemetryReader`,
-   `BurstDetector` + T-E2.** Week 7.
+   `BurstDetector` + T-E2.** Week 7 — **next**.
+   The generator is mostly assembled already: `FlightSimulator` produces the trajectory,
+   `DispersionSampler` draws truth parameters, and `CsvWriter` writes the rows. What is new is the
+   noise model (GPS and pressure noise, dropouts) and the `truth_json` column on `flight_log`, which
+   is what T-V5 and T-V6 will score against.
+   FR-1.4 requires that the same seed reproduces a **byte-identical** file, so write the generator
+   against `Locale.ROOT` formatting as `CsvWriter` already does, and assert the byte equality
+   directly rather than comparing parsed values.
 4. **`ParticleFilter`, `GaussianMeasurementModel`, `SystematicResampler`, `ReplayService`, T-V5.**
    Week 8, tag `v0.3-estimator`. Do not start before the ensemble runner is green.
 5. **`ReportService`, T-V6, T-V7, PL-3…PL-6, coverage to 80% on `estimation`.** Week 9, tag
