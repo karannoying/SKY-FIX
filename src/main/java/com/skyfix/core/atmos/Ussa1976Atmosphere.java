@@ -136,6 +136,44 @@ public final class Ussa1976Atmosphere implements AtmosphereModel {
                 / (EFFECTIVE_EARTH_RADIUS_M - geopotentialM);
     }
 
+    /**
+     * The geometric altitude at which the model predicts a given pressure — pressure altitude.
+     *
+     * <p>Telemetry often carries a barometer reading with no GPS fix (FR-1.2), and a barometer
+     * measures altitude far more smoothly than GPS does. Inverting the model turns that reading
+     * into an altitude.
+     *
+     * <p>Found by bisection, because pressure falls strictly monotonically with altitude through
+     * every layer, so bisection converges to machine precision with nothing to tune and no
+     * per-layer inverse to get wrong. It is the same argument as {@code Gaussian.inverseCdf}.
+     *
+     * <p><strong>This is pressure altitude, not true altitude.</strong> It is what the standard
+     * atmosphere would put at that pressure, and on a day whose profile differs from the standard
+     * the two are not the same. The estimator is what reconciles them.
+     *
+     * @param pressurePa the measured pressure, Pa
+     * @return the geometric altitude above MSL in metres
+     * @throws ModelDomainException if the pressure lies outside the range the model spans
+     */
+    public double altitudeForPressure(double pressurePa) throws ModelDomainException {
+        double atFloor = pressurePa(FLOOR_M);
+        double atCeiling = pressurePa(CEILING_M);
+        if (Double.isNaN(pressurePa) || pressurePa > atFloor || pressurePa < atCeiling) {
+            throw ModelDomainException.outOfRange("pressure", pressurePa, atCeiling, atFloor, "Pa");
+        }
+        double low = FLOOR_M;
+        double high = CEILING_M;
+        for (int i = 0; i < 200; i++) {
+            double mid = 0.5 * (low + high);
+            if (pressurePa(mid) > pressurePa) {
+                low = mid;   // still too low down: pressure there is higher than measured
+            } else {
+                high = mid;
+            }
+        }
+        return 0.5 * (low + high);
+    }
+
     /** @return the number of layers in the model */
     public static int layerCount() {
         return LAYERS.length - 1;

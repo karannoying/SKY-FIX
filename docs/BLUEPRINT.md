@@ -350,7 +350,7 @@ set always lives in `ensemble_member`.
 | DS-3 | US Standard Atmosphere 1976 reference tables | CSV, 25 rows | public, US Government document | none — used verbatim as the T-V1 oracle | `data/reference/ussa1976.csv` |
 | DS-4 | Totex/Kaymont burst-diameter and nominal-lift tables (verify: datasheet figures) | CSV, hand-entered with a `source` column | manufacturer spec sheet | g→kg, in→m | `data/reference/balloons.csv` |
 | DS-5 | HabSat bench logs, K-SAT RFM95W packet dumps | CSV / binary | mine, with team permission | de-duplicate by packet id, derive pressure altitude, flag GPS dropouts | 1 short bench log ships |
-| DS-6 | FR-1.4 synthetic generator, seeded | CSV + `truth_json` | generated locally | none | **primary evaluation set** — 20 flights regenerate from `data/truth/seeds.csv` |
+| DS-6 | FR-1.4 synthetic generator, seeded | CSV + `truth_json` | generated locally | none | **primary evaluation set** — 20 flights regenerate byte-identically from `data/truth/seeds.csv` via `run.sh synth`. **Built:** burst altitudes span 24.6–31.8 km and ascent Cd 0.30–0.67. The ~11 MB of telemetry is deliberately *not* committed; the seed file is the dataset definition and `data/truth/truth-manifest.csv` summarises the truth |
 | DS-7 | SRTM/ASTER tiles (verify: access) — Stretch only | GeoTIFF | — | resample to coarse grid | constant ground elevation from `mission.json` |
 
 **State plainly in the report:** no real 30 km or 45 km flight log exists yet, so O3/O4 are
@@ -381,7 +381,7 @@ score it with no code change.
 | T-V5 | Parameter recovery, 20 DS-6 flights with known truth | Cd ≤5%, burst altitude ≤500 m, in ≥18/20 |
 | T-V6 | Live vs frozen landing error, same 20 flights | median reduction ≥30% |
 | T-V7 | 95% ellipse empirical containment | 0.90–0.98 — **the fitter is calibrated**: against a synthetic Gaussian cloud the 50/90/95% ellipses contained 49.9/90.0/95.1% (T-U-ELLIPSE). T-V7 repeats this against real ensembles, where the Gaussian assumption may not hold |
-| T-E2 | Burst detection, σ=10 m GPS noise, 3 s dropout | ≤5 s, ≤150 m, 0 false positives |
+| T-E2 | Burst detection, σ=10 m GPS noise, 3 s dropout | ≤5 s, ≤150 m, 0 false positives — **met across six seeds: time error 0.0–2.3 s, altitude error 1–36 m, no false positive across dropout runs of 3 and 5 samples** |
 | T-D2 | Real-hardware replay of the DS-5 bench log | completes, no NaN, dropouts reported |
 
 **Plots:** PL-1 altitude vs time with ensemble band and telemetry overlay · PL-2 landing scatter

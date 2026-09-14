@@ -3,8 +3,11 @@ package com.skyfix.cli;
 import com.skyfix.app.IngestService;
 import com.skyfix.app.PredictionService;
 import com.skyfix.app.RunContext;
+import com.skyfix.app.SynthService;
 import com.skyfix.app.ValidationService;
+import com.skyfix.domain.BalloonConfig;
 import com.skyfix.domain.DispersionSpec;
+import com.skyfix.domain.NoiseSpec;
 import com.skyfix.domain.SimSettings;
 import com.skyfix.domain.error.SkyfixException;
 import com.skyfix.domain.error.ValidationException;
@@ -25,6 +28,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Parses arguments, dispatches to a command and maps failures to exit codes (BLUEPRINT §12).
@@ -78,6 +82,7 @@ public final class SkyfixCli {
             return switch (command) {
                 case "ingest" -> ingest(options);
                 case "predict" -> predict(options);
+                case "synth" -> synth(options);
                 case "validate" -> validate(options);
                 case "version" -> version();
                 default -> {
@@ -185,6 +190,25 @@ public final class SkyfixCli {
                     settings.stepSeconds(), memberCount, context.elapsedMs()));
             return 0;
         }
+    }
+
+    private int synth(Map<String, String> options) throws SkyfixException {
+        Path outputDir = Path.of(options.getOrDefault("out", "data/truth"));
+        ConfigLoader loader = new ConfigLoader();
+        BalloonConfig balloon = loader.loadBalloon(requiredPath(options, "balloon"));
+        ConfigLoader.MissionSpec mission = loader.loadMission(requiredPath(options, "mission"));
+        SimSettings settings = loader.loadSimSettings(
+                loader.read(requiredPath(options, "mission")), mission.groundElevationM());
+
+        SynthService service = new SynthService();
+        List<SynthService.GeneratedFlight> flights = service.generateAll(outputDir, balloon,
+                settings, mission.launch(), Optional.empty(), NoiseSpec.standard());
+
+        Path manifest = outputDir.resolve("truth-manifest.csv");
+        service.writeManifest(manifest, flights);
+
+        reporter.printSynthSummary(flights, outputDir, manifest);
+        return 0;
     }
 
     private int validate(Map<String, String> options) throws SkyfixException {
@@ -325,6 +349,12 @@ public final class SkyfixCli {
                     --seed     <n>               run seed (default: 42)
                     --out      <dir>             export directory (default: out)
                     --db       <file>            database file (default: skyfix.db)
+
+                  synth      regenerate the DS-6 synthetic evaluation set from
+                             data/truth/seeds.csv; the same seeds reproduce the same files
+                    --mission  <mission.json>    mission definition        (required)
+                    --balloon  <balloon.json>    balloon configuration     (required)
+                    --out      <dir>             output directory (default: data/truth)
 
                   validate   run the reference-case suite; exits non-zero on any breach
                     --db       <file>            also persist the results to this database

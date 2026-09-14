@@ -215,6 +215,41 @@ class Ussa1976AtmosphereTest {
         }
     }
 
+    @Test
+    @DisplayName("FR-1.2: pressure altitude inverts the model exactly, across the whole range")
+    void pressureAltitudeInvertsTheModel() throws Exception {
+        for (double h = -4_000; h <= 85_000; h += 250) {
+            double pressure = atmosphere.pressurePa(h);
+            assertThat(atmosphere.altitudeForPressure(pressure))
+                    .as("round trip at %.0f m", h)
+                    .isEqualTo(h, within(1e-6));
+        }
+    }
+
+    @Test
+    @DisplayName("FR-1.2: pressure altitude agrees with the reference table independently")
+    void pressureAltitudeAgreesWithTheReferenceTable() throws Exception {
+        // Feeding the DS-3 pressures back in must recover the DS-3 altitudes. That checks the
+        // inversion against the published table rather than only against the forward model.
+        for (Row r : reference()) {
+            assertThat(atmosphere.altitudeForPressure(r.pressurePa()))
+                    .as("pressure altitude at %.0f m", r.altitudeM())
+                    .isCloseTo(r.altitudeM(), within(15.0));
+        }
+    }
+
+    @Test
+    @DisplayName("FR-1.2: a pressure outside the model's range is refused, not extrapolated")
+    void pressureOutsideTheRangeIsRefused() {
+        assertThatThrownBy(() -> atmosphere.altitudeForPressure(200_000.0))
+                .isInstanceOf(ModelDomainException.class)
+                .hasMessageContaining("pressure");
+        assertThatThrownBy(() -> atmosphere.altitudeForPressure(0.0))
+                .isInstanceOf(ModelDomainException.class);
+        assertThatThrownBy(() -> atmosphere.altitudeForPressure(Double.NaN))
+                .isInstanceOf(ModelDomainException.class);
+    }
+
     private static double relative(double actual, double expected) {
         return Math.abs(actual - expected) / Math.abs(expected);
     }

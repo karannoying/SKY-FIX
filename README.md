@@ -23,7 +23,10 @@ The particle-filter estimator is specified in `docs/BLUEPRINT.md` and is not imp
 | SQLite persistence, 13 tables, 6 DAOs (ADR-2) | done, validated by T-D1, T-D3, T-D4, T-S1 |
 | CLI: `ingest`, `predict`, `validate`, `version` | done, validated by T-U1, T-E1 |
 | Monte Carlo ensemble + 50/95% ellipse (FR-2.4) | done, validated by T-U-LHS, T-U-ELLIPSE, T-P1, T-R1 |
-| Particle-filter parameter estimation (FR-3.x) | **not yet** — week 8 |
+| Telemetry ingest and replay (FR-1.2) | done, validated by T-E5, T-P4 |
+| Synthetic flight generator, DS-6 (FR-1.4) | done, validated by `SynthServiceTest` |
+| Burst detection (FR-3.4) | done, validated by T-E2 |
+| Particle-filter parameter estimation (FR-3.1–3.3) | **not yet** — week 8 |
 | PNG plots PL-1, PL-2, PL-6 (FR-4.2) | done, validated by `PlotExporterTest` |
 
 ## Requirements
@@ -46,6 +49,10 @@ git clone <repository-url> && cd SKY-FIX
 # a dispersed footprint rather than a single point: 50% and 95% confidence ellipses
 ./scripts/run.sh predict --mission data/missions/mission.json \
                          --balloon data/missions/balloon.json --sounding-id 1 --members 1000
+
+# regenerate the DS-6 synthetic evaluation set (20 flights with known truth)
+./scripts/run.sh synth   --mission data/missions/mission.json \
+                         --balloon data/missions/balloon.json
 ```
 
 ```cmd
@@ -108,6 +115,8 @@ this table; the figures below are its current output.
 | T-U-ELLIPSE | Recover known semi-axes and orientation from a synthetic cloud | 2% | **0.58% / 0.51% / 0.27°** |
 | T-P1 | 1,000-member ensemble, 4 cores, warm JVM, sounding wind | 30 s | **5.84 s** (3-run median) |
 | T-P2 | 200-member re-prediction | 5 s | **1.05 s** |
+| T-P4 | 10,000 telemetry samples parsed | 3 s | **0.11 s** |
+| T-E2 | Burst detection, 10 m GPS noise, dropouts | 5 s, 150 m, 0 false positives | **0.0–2.3 s, 1–36 m, none** |
 | T-R1 | Same seed, 1 thread vs 4 threads, identical ellipse | 1e-9 | **met** |
 | T-V5–T-V7 | Parameter recovery, error reduction, ellipse containment | — | not yet implemented (weeks 7–9) |
 
@@ -146,6 +155,11 @@ own limit by applying itself to `y' = λy` — nothing is transcribed. See `docs
 - **Replay only.** No live serial or radio ingest in `src/main`, by design (ADR-4).
 - **`data/soundings/` ships a synthetic profile**, clearly labelled, because the archive was not
   reachable from the build environment. See the file header and `[PLACEHOLDER — DS-1]`.
+- **DS-6 is synthetic by necessity.** No real 30 km or 45 km flight log exists yet, so O3 and O4
+  are scored on twenty generated flights with known truth. `data/truth/seeds.csv` is the dataset
+  definition and the telemetry regenerates from it byte-identically; the generated logs are not
+  committed. Every file says in its first line that it is synthetic. When HabSat flies, the same
+  commands score a recorded log with no code change.
 - **`data/reference/ussa1976.csv` is corroborated, not yet transcribed from the primary document.**
   Its 25 rows come from two independent third-party implementations of the standard that agree to
   0.00987%. The header carries a `verify:` marker requiring hand transcription from NOAA-S/T 76-1562

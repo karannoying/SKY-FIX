@@ -23,9 +23,10 @@ and a 45 km ascent with ~400 km of drift.
 
 ## Current Progress
 
-**The MVP is tagged `v0.1-mvp`, and the week-5 ensemble is built and green.** `predict --members N`
-now produces a landing footprint — 50% and 95% confidence ellipses — rather than a single point,
-which is objective O2.
+**Weeks 1–7 are built and green.** `predict --members N` produces a landing footprint — 50% and
+95% confidence ellipses — rather than a single point, which is objective O2; the charts are
+exported; and DS-6, the twenty-flight synthetic evaluation set that O3 and O4 are scored on,
+regenerates byte-identically from a committed seed file. What remains is the estimator itself.
 
 A fresh clone plus a JDK runs the whole path offline in three commands. `./mvnw verify` passes
 with the JaCoCo gate. `./scripts/run.sh validate` reports **84 checks, 84 passed**.
@@ -56,6 +57,9 @@ with the JaCoCo gate. `./scripts/run.sh validate` reports **84 checks, 84 passed
 | T-P2 200-member re-prediction | 5 s | **1.05 s** |
 | T-R1 same seed, 1 vs 4 threads | 1e-9 | **met** |
 | FR-4.2 chart export | 5 s | **100 ms** |
+| T-P4 10,000 telemetry samples | 3 s | **112 ms** |
+| T-E2 burst detection (6 seeds) | 5 s, 150 m, 0 false pos | **0.0–2.3 s, 1–36 m, none** |
+| FR-1.4 DS-6 byte-identical regeneration | exact | **met** |
 | Coverage, `core.atmos` / `core.flight` | 80% | **100% / 96.4%** |
 
 **Measure timing with `-Pperf` only, and with nothing else on the machine.** T-P1's first reading
@@ -117,6 +121,12 @@ Things the implementation itself disproved:
   wasted objects per 1,000-member run, at 16.6 s against 9.7 s once members outside the retention
   sample stopped sampling states at all.
 - **A performance figure measured under instrumentation is not a performance figure.** See ADR-15.
+- **Out-of-order counting has two defensible definitions, and they differ.** Counting stream
+  *inversions* (a packet whose timestamp precedes the one before it) is what a replay notices as a
+  late packet; counting packets displaced from their sorted position reports a larger number that
+  says more about the sort than about the radio link. SKYFIX counts inversions, and
+  `CsvTelemetryReaderTest` spells out why — the first version of that test asserted the other
+  definition's answer and failed.
 - **Charts need looking at, not just testing.** Three PL-1/PL-2 defects — every line silently
   dashed by XChart's default style cycling, a footprint framed on a launch site 143 km away, and a
   title clipped at both ends — all passed the automated checks and were only caught by rendering
@@ -137,17 +147,29 @@ Work in order. The MVP is tagged, so everything below is additive.
    against the 5 s budget. See ADR-16 for the design decisions, and read it before adding PL-3
    to PL-5 so the new charts match: validated colour, one axis, solid lines, muted chrome for
    thresholds.
-3. **`SyntheticFlightWriter` + 20 truth flights from `data/truth/seeds.csv`, `CsvTelemetryReader`,
-   `BurstDetector` + T-E2.** Week 7 — **next**.
-   The generator is mostly assembled already: `FlightSimulator` produces the trajectory,
-   `DispersionSampler` draws truth parameters, and `CsvWriter` writes the rows. What is new is the
-   noise model (GPS and pressure noise, dropouts) and the `truth_json` column on `flight_log`, which
-   is what T-V5 and T-V6 will score against.
-   FR-1.4 requires that the same seed reproduces a **byte-identical** file, so write the generator
-   against `Locale.ROOT` formatting as `CsvWriter` already does, and assert the byte equality
-   directly rather than comparing parsed values.
+3. ~~`SyntheticFlightWriter` + 20 truth flights, `CsvTelemetryReader`, `BurstDetector` + T-E2.~~
+   **Done.** DS-6 exists and regenerates byte-identically via `run.sh synth`; T-E2 passes on six
+   seeds with 0.0–2.3 s and 1–36 m error and no false positives across dropouts.
 4. **`ParticleFilter`, `GaussianMeasurementModel`, `SystematicResampler`, `ReplayService`, T-V5.**
-   Week 8, tag `v0.3-estimator`. Do not start before the ensemble runner is green.
+   Week 8 — **next**, tag `v0.3-estimator`. The ensemble runner is green, so this is unblocked.
+
+   What is already in place: `DispersionSpec` is the prior the particle set is drawn from and
+   `DispersionSampler` can draw it; `BurstDetector` tells the filter when to switch to the descent
+   model; `FlightSimulator.runFrom` propagates a particle from a measured state; `EnsembleRunner`
+   does the FR-3.3 re-prediction, measured at 1,054 ms for 200 members.
+
+   Three things to decide early:
+   - **Cost.** ADR-3 caps the filter at 500 particles. Propagating 500 particles per update over a
+     ~8,000-sample log is the expensive part, so measure it before tuning anything else — the
+     answer probably means propagating on a coarser cadence than every sample.
+   - **FR-3.3's stated rationale does not hold arithmetically.** It justifies a 5 s re-prediction
+     budget as letting "a 1 Hz log replayed at 10x drop no updates", but 10x replay allows 100 ms
+     per sample, so a 5 s re-prediction cannot run per-sample under any implementation. The
+     tolerance is met (1,054 ms); the rationale implies re-prediction is periodic rather than
+     per-sample. Settle which it is before building on it.
+   - **The measurement model needs a pressure channel.** `CsvTelemetryReader` already derives
+     pressure altitude and flags it, so the filter can weight a GPS altitude and a barometric one
+     differently — worth doing, since a dropout leaves only the barometer.
 5. **`ReportService`, T-V6, T-V7, PL-3…PL-6, coverage to 80% on `estimation`.** Week 9, tag
    `v0.4-validated`.
 6. **Report, screenshots SC-1…SC-10, compliance checklist.** Week 10, tag `v1.0-submission`.

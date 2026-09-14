@@ -176,6 +176,42 @@ public final class ConsoleReporter {
     }
 
     /**
+     * Prints a summary of a generated DS-6 set.
+     *
+     * @param flights  the generated flights
+     * @param outputDir where the telemetry logs went
+     * @param manifest  where the truth manifest went
+     */
+    public void printSynthSummary(java.util.List<com.skyfix.app.SynthService.GeneratedFlight> flights,
+                                  java.nio.file.Path outputDir, java.nio.file.Path manifest) {
+        out.println();
+        out.printf(Locale.ROOT, "DS-6 evaluation set: %d synthetic flights%n", flights.size());
+        out.println("-".repeat(78));
+        out.printf(Locale.ROOT, "%-16s %10s %12s %12s %9s%n",
+                "FLIGHT", "BURST (m)", "ASCENT Cd", "FREE LIFT", "SAMPLES");
+        out.println("-".repeat(78));
+
+        double minBurst = Double.MAX_VALUE;
+        double maxBurst = -Double.MAX_VALUE;
+        for (var flight : flights) {
+            var truth = flight.truth();
+            minBurst = Math.min(minBurst, truth.burstAltitudeM());
+            maxBurst = Math.max(maxBurst, truth.burstAltitudeM());
+            out.printf(Locale.ROOT, "%-16s %10.0f %12.4f %12.4f %9d%n",
+                    flight.name(), truth.burstAltitudeM(), truth.parameters().ascentCd(),
+                    truth.parameters().freeLiftKg(), truth.sampleCount());
+        }
+        out.println("-".repeat(78));
+        out.printf(Locale.ROOT, "  burst altitude spans %,.0f to %,.0f m%n", minBurst, maxBurst);
+        out.println("  telemetry    " + outputDir);
+        out.println("  truth        " + manifest);
+        out.println();
+        out.println("  These are SYNTHETIC flights with known truth (DS-6). They exist because no");
+        out.println("  real 30 km or 45 km log has flown yet, and they are what T-V5 and T-V6 are");
+        out.println("  scored against. Nothing here is an observation.");
+    }
+
+    /**
      * Prints a line of normal output.
      *
      * @param message the message
