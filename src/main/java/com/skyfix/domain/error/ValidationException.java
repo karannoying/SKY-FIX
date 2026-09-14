@@ -37,4 +37,18 @@ public class ValidationException extends SkyfixException {
     public int exitCode() {
         return 2;
     }
+
+    /**
+     * Narrows {@link SkyfixException#with} to this type, so a throw site that has already
+     * chosen a specific failure does not lose it by adding context.
+     *
+     * @param key   context key
+     * @param value context value
+     * @return this exception
+     */
+    @Override
+    public ValidationException with(String key, Object value) {
+        super.with(key, value);
+        return this;
+    }
 }

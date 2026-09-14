@@ -157,4 +157,48 @@ class DomainTypesTest {
         // Replacing one field leaves the rest alone.
         assertThat(p.withWindScale(1.2).freeLiftKg()).isEqualTo(p.freeLiftKg());
     }
+
+    @Test
+    @DisplayName("cdf inverts quantile across every distribution")
+    void cdfInvertsQuantile() throws Exception {
+        Distribution uniform = new Distribution.Uniform(2.0, 8.0);
+        Distribution normal = Distribution.TruncatedNormal.symmetric(7.0, 0.7, 3.0);
+
+        for (int i = 1; i < 100; i++) {
+            double p = i / 100.0;
+            assertThat(uniform.cdf(uniform.quantile(p))).isCloseTo(p, within(1e-9));
+            assertThat(normal.cdf(normal.quantile(p))).isCloseTo(p, within(1e-6));
+        }
+        // Outside the support the answer is saturated, not extrapolated.
+        assertThat(uniform.cdf(1.0)).isZero();
+        assertThat(uniform.cdf(9.0)).isEqualTo(1.0);
+        assertThat(normal.cdf(normal.minimum() - 1.0)).isZero();
+        assertThat(normal.cdf(normal.maximum() + 1.0)).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("conditioning a prior on a lower bound never returns a value below it")
+    void cdfSupportsTruncatedSampling() throws Exception {
+        // How the particle filter samples burst diameter given that the envelope has reached D
+        // without bursting (ADR-3 §4).
+        Distribution prior = Distribution.TruncatedNormal.symmetric(7.0, 0.7, 3.0);
+        double reached = 6.2;
+        double pLow = prior.cdf(reached);
+
+        for (int i = 1; i < 200; i++) {
+            double u = pLow + (i / 200.0) * (1.0 - pLow);
+            assertThat(prior.quantile(u)).isGreaterThanOrEqualTo(reached - 1e-9);
+        }
+        assertThat(pLow).isGreaterThan(0.0).isLessThan(1.0);
+    }
+
+    @Test
+    @DisplayName("spread reports a usable width for each distribution shape")
+    void spreadDescribesTheWidth() throws Exception {
+        assertThat(new Distribution.Uniform(0.0, 12.0).spread())
+                .isCloseTo(12.0 / Math.sqrt(12.0), within(1e-12));
+        assertThat(Distribution.TruncatedNormal.symmetric(7.0, 0.7, 3.0).spread())
+                .isEqualTo(0.7);
+        assertThat(new Distribution.Fixed(4.0).spread()).isZero();
+    }
 }

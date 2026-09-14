@@ -35,6 +35,9 @@ public final class FlightSimulator {
     /** Below this speed at ground contact the landing is treated as reached, m/s. */
     private static final double GROUND_EPSILON_M = 1e-6;
 
+    /** Flight times closer together than this are the same instant, seconds. */
+    private static final double TIME_EPSILON_S = 1e-9;
+
     private final AtmosphereModel atmosphere;
     private final WindField windField;
 
@@ -83,7 +86,7 @@ public final class FlightSimulator {
 
         double[] y = {launch.latitudeDeg(), launch.longitudeDeg(), launch.altitudeM(), 0.0};
         FlightPhase phase = new AscentPhase(atmosphere, windField, config, parameters, gasMass);
-        return integrate(config, parameters, settings, phase, 0.0, y, gasMass);
+        return integrate(config, parameters, settings, phase, 0.0, y);
     }
 
     /**
@@ -104,23 +107,100 @@ public final class FlightSimulator {
      */
     public StateHistory runFrom(BalloonConfig config, FlightParameters parameters,
                                 SimSettings settings, BalloonState from) throws SkyfixException {
-        AtmosphericState air = atmosphere.stateAt(from.altitudeM());
-        double[] y = {from.latitudeDeg(), from.longitudeDeg(), from.altitudeM(),
-                from.verticalRateMs()};
+        return integrate(config, parameters, settings, phaseFor(config, parameters, from),
+                from.timeSeconds(), stateVector(from));
+    }
 
-        FlightPhase phase;
-        double gasMass;
-        if (from.phase() == Phase.DESCENT || from.phase() == Phase.BURST) {
-            phase = new DescentPhase(atmosphere, windField, config, parameters);
-            gasMass = 0.0;
-        } else {
-            // Recover the gas mass implied by the measured diameter, so the re-prediction
-            // continues the flight that was actually observed rather than a fresh nominal one.
-            double volume = BalloonConfig.volumeOfDiameter(from.diameterM());
-            gasMass = volume * config.gas().densityAt(air.pressurePa(), air.temperatureK());
-            phase = new AscentPhase(atmosphere, windField, config, parameters, gasMass);
+    /**
+     * Advances one state forward to a given flight time without building a history (FR-3.2).
+     *
+     * <p>This is what the particle filter propagates with. The alternative — re-simulating every
+     * particle from launch at every telemetry sample — is quadratic in the log length and would
+     * put a 500-particle filter over an 8,000-sample log at four billion integration steps. Here
+     * each particle carries its own state forward by one observation interval, so the whole
+     * replay costs one flight per particle.
+     *
+     * <p>The step is truncated at the target time rather than overshooting it, so the returned
+     * state sits exactly on the observation epoch and the likelihood compares like with like. That
+     * makes the step sequence depend on the observation spacing, which is a deliberate trade: a
+     * truncated final step is a smaller step, and a smaller step is never less stable.
+     *
+     * <p>The returned state carries everything the next call needs — phase, diameter and rate — so
+     * a particle is just a parameter set and a {@link BalloonState}, with no separate integrator
+     * state to keep in step.
+     *
+     * @param config            the balloon configuration
+     * @param parameters        this particle's parameters
+     * @param settings          integration settings
+     * @param from              the state to advance from
+     * @param targetTimeSeconds the flight time to advance to, seconds since launch
+     * @return the state at {@code targetTimeSeconds}, or the landed state if it reaches the ground
+     *         first; {@code from} unchanged if it has already landed or is already at or past the
+     *         target
+     * @throws SkyfixException if a model is queried out of range or the step is unstable
+     */
+    public BalloonState advanceTo(BalloonConfig config, FlightParameters parameters,
+                                  SimSettings settings, BalloonState from,
+                                  double targetTimeSeconds) throws SkyfixException {
+        if (from.phase() == Phase.LANDED || targetTimeSeconds - from.timeSeconds() <= TIME_EPSILON_S) {
+            return from;
         }
-        return integrate(config, parameters, settings, phase, from.timeSeconds(), y, gasMass);
+        return advance(config, parameters, settings, phaseFor(config, parameters, from),
+                from.timeSeconds(), stateVector(from), targetTimeSeconds, null);
+    }
+
+    /**
+     * Rebuilds the phase object implied by a state.
+     *
+     * <p>Ascent needs its sealed-in gas mass back, and the only record of it in a
+     * {@link BalloonState} is the envelope diameter — so it is recovered from the diameter and the
+     * ambient conditions, which is exact because {@code V = m/rho} inverts {@code m = V rho}. This
+     * is shared by {@link #runFrom} and {@link #advanceTo} so the two can never disagree about
+     * what a state means.
+     */
+    private FlightPhase phaseFor(BalloonConfig config, FlightParameters parameters,
+                                 BalloonState from) throws SkyfixException {
+        if (from.phase() == Phase.DESCENT || from.phase() == Phase.BURST) {
+            return new DescentPhase(atmosphere, windField, config, parameters);
+        }
+        AtmosphericState air = atmosphere.stateAt(from.altitudeM());
+        double volume = BalloonConfig.volumeOfDiameter(from.diameterM());
+        double gasMass = volume * config.gas().densityAt(air.pressurePa(), air.temperatureK());
+        return new AscentPhase(atmosphere, windField, config, parameters, gasMass);
+    }
+
+    private static double[] stateVector(BalloonState from) {
+        return new double[]{from.latitudeDeg(), from.longitudeDeg(), from.altitudeM(),
+                from.verticalRateMs()};
+    }
+
+    /** @return the atmosphere model this simulator integrates against */
+    public AtmosphereModel atmosphere() {
+        return atmosphere;
+    }
+
+    /**
+     * The at-rest ascent state a flight begins in (FR-3.2).
+     *
+     * <p>The filter needs this because a particle is a parameter set plus a state, and at launch
+     * every particle's state differs: free lift fixes the gas mass, and the gas mass fixes the
+     * envelope diameter the balloon leaves the ground at. Building it here rather than in the
+     * filter keeps the one definition of "launch" in the one class that integrates from it.
+     *
+     * @param config     the balloon configuration
+     * @param parameters this member's parameters
+     * @param launch     the launch position; its altitude is the release altitude
+     * @return the state at t = 0, at rest, in {@link Phase#ASCENT}
+     * @throws SkyfixException if the gas is not buoyant at the launch site or the atmosphere is
+     *                         queried out of range
+     */
+    public BalloonState launchState(BalloonConfig config, FlightParameters parameters,
+                                    GeoPoint launch) throws SkyfixException {
+        AtmosphericState air = atmosphere.stateAt(launch.altitudeM());
+        double gasMass = gasMassFor(config, parameters, air);
+        double diameter = BalloonConfig.diameterOfVolume(
+                config.volumeAt(gasMass, air.pressurePa(), air.temperatureK()));
+        return new BalloonState(0.0, launch, 0.0, diameter, Phase.ASCENT, false);
     }
 
     /**
@@ -141,25 +221,65 @@ public final class FlightSimulator {
                 launchAir.temperatureK());
     }
 
+    /**
+     * Runs a whole flight to landing and returns its history.
+     *
+     * @throws ConvergenceException if the flight is still airborne at the time ceiling
+     */
     private StateHistory integrate(BalloonConfig config, FlightParameters parameters,
                                    SimSettings settings, FlightPhase initialPhase,
-                                   double startTime, double[] initialState, double gasMass)
+                                   double startTime, double[] initialState)
             throws SkyfixException {
 
-        Integrator integrator = IntegratorFactory.create(settings.integrator());
         StateHistory.Builder history = StateHistory.builder();
+        BalloonState last = advance(config, parameters, settings, initialPhase, startTime,
+                initialState, settings.endSeconds(), history);
+
+        if (last.phase() != Phase.LANDED) {
+            throw new ConvergenceException(
+                    "flight did not reach the ground within t_end_s (" + settings.endSeconds()
+                            + " s); last altitude " + last.altitudeM() + " m")
+                    .with("t_end_s", settings.endSeconds())
+                    .with("last_altitude_m", last.altitudeM());
+        }
+        return history.build();
+    }
+
+    /**
+     * The one integration loop, shared by the whole-flight and single-leg entry points.
+     *
+     * <p>It advances from {@code startTime} until either the vehicle lands or the clock reaches
+     * {@code stopTime}, whichever comes first, and returns the state it stopped at. A landing is
+     * reported by the returned state's phase being {@link Phase#LANDED}, which is what lets
+     * {@link #advanceTo} tell "still flying at the target time" from "already down" without a
+     * second return value.
+     *
+     * @param history where to record states, burst and landing, or {@code null} to record nothing
+     *                — the filter propagates half a million legs and has no use for any of it
+     */
+    private BalloonState advance(BalloonConfig config, FlightParameters parameters,
+                                 SimSettings settings, FlightPhase initialPhase,
+                                 double startTime, double[] initialState, double stopTime,
+                                 StateHistory.Builder history) throws SkyfixException {
+
+        Integrator integrator = IntegratorFactory.create(settings.integrator());
 
         FlightPhase phase = initialPhase;
         double[] y = initialState.clone();
         double t = startTime;
-        double h = settings.stepSeconds();
         int step = 0;
 
         double stabilityLimit = integrator.realAxisStabilityLimit();
         AtmosphericState air = atmosphere.stateAt(y[FlightPhase.ALT]);
-        history.add(state(t, y, phase.diameterM(air), phase.phase(), false));
+        if (history != null) {
+            history.add(state(t, y, phase.diameterM(air), phase.phase(), false));
+        }
 
-        while (t < settings.endSeconds()) {
+        while (stopTime - t > TIME_EPSILON_S) {
+            // Truncate the last step so the leg ends exactly on the requested time rather than
+            // overshooting it by up to one step.
+            double h = Math.min(settings.stepSeconds(), stopTime - t);
+
             requireStableStep(phase, air, y[FlightPhase.VZ], h, stabilityLimit,
                     integrator.name(), y[FlightPhase.ALT]);
             phase.clearWindExtrapolated();
@@ -167,7 +287,9 @@ public final class FlightSimulator {
             boolean extrapolated = phase.windExtrapolated();
             t += h;
             step++;
-            history.countStep(extrapolated);
+            if (history != null) {
+                history.countStep(extrapolated);
+            }
 
             AtmosphericState nextAir = atmosphere.stateAt(next[FlightPhase.ALT]);
 
@@ -177,38 +299,43 @@ public final class FlightSimulator {
                     && next[FlightPhase.ALT] <= settings.groundElevationM()) {
                 BalloonState landed = interpolateToGround(y, next, t - h, h,
                         settings.groundElevationM(), phase.diameterM(nextAir), extrapolated);
-                history.add(landed).landing(landed);
-                LOG.log(Level.INFO, () -> String.format(
-                        "landed after %.0f s at %s", landed.timeSeconds(), landed.position()));
-                return history.build();
+                if (history != null) {
+                    history.add(landed).landing(landed);
+                    LOG.log(Level.INFO, () -> String.format(
+                            "landed after %.0f s at %s", landed.timeSeconds(), landed.position()));
+                }
+                return landed;
             }
 
             if (phase.isComplete(nextAir, next[FlightPhase.ALT], settings.groundElevationM())) {
                 if (phase.phase() == Phase.ASCENT) {
                     BalloonState burst = state(t, next, phase.diameterM(nextAir), Phase.BURST,
                             extrapolated);
-                    history.add(burst).burst(burst);
-                    LOG.log(Level.INFO, () -> String.format(
-                            "burst at %.0f m after %.0f s", burst.altitudeM(), burst.timeSeconds()));
+                    if (history != null) {
+                        history.add(burst).burst(burst);
+                        LOG.log(Level.INFO, () -> String.format("burst at %.0f m after %.0f s",
+                                burst.altitudeM(), burst.timeSeconds()));
+                    }
                     phase = new DescentPhase(atmosphere, windField, config, parameters);
                     y = next;
                     air = nextAir;
+                    // Burst is stamped on the state, so a leg ending here hands the next leg a
+                    // descending vehicle rather than one that would re-inflate.
+                    if (stopTime - t <= TIME_EPSILON_S) {
+                        return burst;
+                    }
                     continue;
                 }
             }
 
             y = next;
             air = nextAir;
-            if (step % settings.stateSampleStride() == 0) {
+            if (history != null && step % settings.stateSampleStride() == 0) {
                 history.add(state(t, y, phase.diameterM(nextAir), phase.phase(), extrapolated));
             }
         }
 
-        throw new ConvergenceException(
-                "flight did not reach the ground within t_end_s (" + settings.endSeconds()
-                        + " s); last altitude " + y[FlightPhase.ALT] + " m")
-                .with("t_end_s", settings.endSeconds())
-                .with("last_altitude_m", y[FlightPhase.ALT]);
+        return state(t, y, phase.diameterM(air), phase.phase(), false);
     }
 
     /**

@@ -176,4 +176,62 @@ class MeasurementModelTest {
         assertThatThrownBy(() -> new GaussianMeasurementModel(1, -1, 1))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    @DisplayName("the vertical-rate sigma widens with the baseline the rate was differenced over")
+    void rateSigmaFollowsTheDifferencingBaseline() {
+        GaussianMeasurementModel model = GaussianMeasurementModel.standard();
+        BalloonState predicted = state(LAT, LON, ALT, RATE);
+
+        // Same 3 m/s rate error, differenced over a 2 s baseline and over a 20 s one. The short
+        // baseline is the noisier measurement, so it must be penalised less, not equally.
+        Observation shortBaseline = new Observation(EPOCH, LAT, LON, ALT, RATE + 3.0, 2.0, false);
+        Observation longBaseline = new Observation(EPOCH, LAT, LON, ALT, RATE + 3.0, 20.0, false);
+
+        // Measured against a perfectly matching rate at the *same* baseline, so the density's
+        // normalisation cancels and what is left is the penalty the error itself carries.
+        double shortPenalty = model.logLikelihood(predicted, exact(shortBaseline))
+                - model.logLikelihood(predicted, shortBaseline);
+        double longPenalty = model.logLikelihood(predicted, exact(longBaseline))
+                - model.logLikelihood(predicted, longBaseline);
+
+        assertThat(longPenalty)
+                .as("a rate measured over a longer baseline is trusted more, so its error costs more")
+                .isGreaterThan(shortPenalty);
+
+        // The failure this guards against is concrete: with a flat 2 m/s sigma, one GPS error at
+        // 26.8 km handed the entire particle set to a wrong hypothesis (ADR-3 §3). A 3 m/s error
+        // over a 2 s baseline must stay a mild penalty, well under one nat.
+        assertThat(shortPenalty).isLessThan(1.0);
+    }
+
+    /** The same observation with the rate error removed, keeping the differencing baseline. */
+    private static Observation exact(Observation o) {
+        return new Observation(o.epochUtc(), o.latitudeDeg(), o.longitudeDeg(), o.altitudeM(),
+                RATE, o.rateIntervalSeconds(), o.altitudeFromPressure());
+    }
+
+    @Test
+    @DisplayName("the horizontal sigma grows with drift once wind-drift weighting is configured")
+    void horizontalSigmaGrowsWithDrift() {
+        GaussianMeasurementModel plain = GaussianMeasurementModel.standard();
+        GaussianMeasurementModel drifting = plain.withWindDrift(new GeoPoint(LAT, LON, 500.0), 0.20);
+
+        // A kilometre downrange, off by 200 m sideways. To the plain model that is a 25-sigma
+        // impossibility; to the drift-aware one it is well inside what a single sounding can claim.
+        double farLat = LAT + 1.0;
+        BalloonState predicted = new BalloonState(600.0, new GeoPoint(farLat, LON, ALT), RATE,
+                6.0, Phase.ASCENT, false);
+        Observation observed = new Observation(EPOCH, farLat + 0.0018, LON, ALT, RATE, 2.0, false);
+
+        assertThat(drifting.logLikelihood(predicted, observed))
+                .isGreaterThan(plain.logLikelihood(predicted, observed));
+
+        // At the launch point itself there is no drift, so the two must agree exactly.
+        BalloonState atLaunch = new BalloonState(0.0, new GeoPoint(LAT, LON, 500.0), 0.0, 1.8,
+                Phase.ASCENT, false);
+        Observation launchFix = new Observation(EPOCH, LAT, LON, 500.0, 0.0, 2.0, false);
+        assertThat(drifting.logLikelihood(atLaunch, launchFix))
+                .isEqualTo(plain.logLikelihood(atLaunch, launchFix));
+    }
 }

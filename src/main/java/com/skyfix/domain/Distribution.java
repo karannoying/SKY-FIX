@@ -34,6 +34,33 @@ public sealed interface Distribution {
     double maximum();
 
     /**
+     * The cumulative probability at a value — the inverse of {@link #quantile}.
+     *
+     * <p>Having both directions is what lets a caller sample a prior <em>conditioned on</em>
+     * something already known: map the known bound to a probability, draw uniformly above it, and
+     * map back. The particle filter needs exactly that, because "the envelope has not burst yet"
+     * is a statement about the lower tail of the burst-diameter prior rather than no statement at
+     * all.
+     *
+     * @param value a value in the parameter's own units
+     * @return the probability of drawing at most {@code value}, in [0, 1]
+     */
+    double cdf(double value);
+
+    /**
+     * A nominal standard deviation, used to scale jitter kernels and to state how much a prior
+     * actually claims to know.
+     *
+     * <p>Not necessarily the exact standard deviation of the distribution as truncated — for a
+     * truncated normal it is the underlying sigma, which is slightly wider than the truth. That is
+     * the conservative direction for every use it has here: a kernel floor derived from it is a
+     * little generous rather than a little too tight.
+     *
+     * @return the nominal spread, in the parameter's own units; zero for a fixed value
+     */
+    double spread();
+
+    /**
      * A uniform distribution over a closed interval.
      *
      * @param low  the lower bound
@@ -59,6 +86,20 @@ public sealed interface Distribution {
         @Override
         public String describe() {
             return String.format("uniform[%.4g, %.4g]", low, high);
+        }
+
+        @Override
+        public double cdf(double value) {
+            if (value <= low) {
+                return 0.0;
+            }
+            return value >= high ? 1.0 : (value - low) / (high - low);
+        }
+
+        @Override
+        public double spread() {
+            // Standard deviation of a uniform distribution on [low, high].
+            return (high - low) / Math.sqrt(12.0);
         }
 
         @Override
@@ -149,6 +190,30 @@ public sealed interface Distribution {
                     mean, standardDeviation, low, high);
         }
 
+        /**
+         * {@inheritDoc}
+         *
+         * <p>Matched to {@link #quantile}, which clamps the underlying normal to {@code [low,
+         * high]} rather than renormalising over it — so the mass outside the truncation sits on
+         * the two endpoints, and this reports the underlying normal's CDF in between. The pair
+         * still inverts, which is all either use needs.
+         */
+        @Override
+        public double cdf(double value) {
+            if (value <= low) {
+                return 0.0;
+            }
+            if (value >= high) {
+                return 1.0;
+            }
+            return Gaussian.cdf((value - mean) / standardDeviation);
+        }
+
+        @Override
+        public double spread() {
+            return standardDeviation;
+        }
+
         @Override
         public double minimum() {
             return low;
@@ -176,6 +241,16 @@ public sealed interface Distribution {
         @Override
         public String describe() {
             return String.format("fixed %.4g", value);
+        }
+
+        @Override
+        public double cdf(double v) {
+            return v < value ? 0.0 : 1.0;
+        }
+
+        @Override
+        public double spread() {
+            return 0.0;
         }
 
         @Override
