@@ -2,17 +2,23 @@ package com.skyfix.app;
 
 import com.skyfix.core.atmos.SoundingLevel;
 import com.skyfix.domain.BalloonConfig;
+import com.skyfix.domain.TelemetrySeries;
 import com.skyfix.domain.error.SkyfixException;
+import com.skyfix.domain.error.ValidationException;
 import com.skyfix.io.ConfigLoader;
+import com.skyfix.io.CsvTelemetryReader;
+import com.skyfix.io.FileDigest;
 import com.skyfix.io.SoundingReader;
 import com.skyfix.io.WyomingSoundingReader;
 import com.skyfix.persistence.BalloonConfigDao;
 import com.skyfix.persistence.Database;
+import com.skyfix.persistence.FlightLog;
 import com.skyfix.persistence.Mission;
 import com.skyfix.persistence.MissionDao;
 import com.skyfix.persistence.SoundingDao;
 import com.skyfix.persistence.StoredBalloonConfig;
 import com.skyfix.persistence.StoredSounding;
+import com.skyfix.persistence.TelemetryDao;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -33,6 +39,7 @@ public final class IngestService {
     private final MissionDao missions;
     private final BalloonConfigDao configs;
     private final SoundingDao soundings;
+    private final TelemetryDao telemetry;
     private final ConfigLoader loader = new ConfigLoader();
 
     /**
@@ -42,6 +49,7 @@ public final class IngestService {
         this.missions = new MissionDao(database);
         this.configs = new BalloonConfigDao(database);
         this.soundings = new SoundingDao(database);
+        this.telemetry = new TelemetryDao(database);
     }
 
     /**
@@ -101,6 +109,53 @@ public final class IngestService {
         LOG.info(() -> "ingested " + stored.levelCount() + " levels from " + path.getFileName()
                 + " (" + parsed.rejectedCount() + " lines rejected)");
         return new SoundingIngestResult(stored, parsed.rejections(), true);
+    }
+
+    /**
+     * Ingests a telemetry log so a replay can reference it (FR-1.2).
+     *
+     * <p>Idempotent on the file's own bytes: a log whose SHA-256 is already stored for this mission
+     * is returned as it stands rather than duplicated. Replaying the same log twice is a normal
+     * thing to do — with a different seed, or after a model change — and each replay should be a
+     * new run against the same stored telemetry, not a new copy of the telemetry.
+     *
+     * @param mission    the mission the log belongs to
+     * @param path       the CSV to read
+     * @param sourceKind {@link FlightLog#RECORDED} or {@link FlightLog#SYNTHETIC}
+     * @return the stored log, the parsed series, and whether this call created the row
+     * @throws SkyfixException if the file cannot be read or stored
+     */
+    public TelemetryIngestResult ingestTelemetry(Mission mission, Path path, String sourceKind)
+            throws SkyfixException {
+        TelemetrySeries series = new CsvTelemetryReader().read(path);
+        String sha = FileDigest.sha256(path);
+        String name = path.getFileName().toString();
+
+        Optional<FlightLog> existing = telemetry.findByName(mission.id(), name);
+        if (existing.isPresent() && sha.equals(existing.get().fileSha256())) {
+            LOG.info(() -> "flight log " + name + " is already ingested; reusing it");
+            return new TelemetryIngestResult(existing.get(), series, false);
+        }
+        if (existing.isPresent()) {
+            throw ValidationException.field("log", name,
+                    "is already stored for this mission with different contents; rename the file "
+                            + "or remove the stored log rather than silently replacing it");
+        }
+
+        FlightLog stored = telemetry.save(new FlightLog(null, mission.id(), name, sourceKind, sha,
+                series.size(), null), series);
+        LOG.info(() -> "ingested " + series.size() + " telemetry samples from " + name);
+        return new TelemetryIngestResult(stored, series, true);
+    }
+
+    /**
+     * What an {@code ingest} of a telemetry log stored.
+     *
+     * @param log    the flight log row
+     * @param series the parsed samples
+     * @param isNew  whether this call created the row
+     */
+    public record TelemetryIngestResult(FlightLog log, TelemetrySeries series, boolean isNew) {
     }
 
     /**

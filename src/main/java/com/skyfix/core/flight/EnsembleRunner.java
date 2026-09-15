@@ -3,6 +3,7 @@ package com.skyfix.core.flight;
 import com.skyfix.core.atmos.AtmosphereModel;
 import com.skyfix.core.atmos.WindField;
 import com.skyfix.domain.BalloonConfig;
+import com.skyfix.domain.BalloonState;
 import com.skyfix.domain.DispersionSpec;
 import com.skyfix.domain.Ensemble;
 import com.skyfix.domain.FlightParameters;
@@ -52,6 +53,16 @@ public final class EnsembleRunner {
 
     /** Above this percentage of failed members, the run itself is considered failed. */
     public static final double FAILURE_THRESHOLD_PERCENT = 1.0;
+
+    /**
+     * Failures always tolerated, whatever the ensemble size.
+     *
+     * <p>{@link #FAILURE_THRESHOLD_PERCENT} on its own is not a usable rule below a hundred
+     * members: one failure out of ten is 10%, so a small ensemble would be failed by a single draw
+     * from the tail of its own dispersion. One failure is by definition one draw, and that is what
+     * the threshold is explicitly not about.
+     */
+    public static final int ALWAYS_TOLERATED_FAILURES = 1;
 
     private final AtmosphereModel atmosphere;
     private final WindField windField;
@@ -104,6 +115,44 @@ public final class EnsembleRunner {
     public Result run(BalloonConfig config, DispersionSpec spec, SimSettings settings,
                       GeoPoint launch, int memberCount, long seed, int historySampleCount)
             throws SkyfixException {
+        return fly(config, spec, settings, memberCount, seed, historySampleCount,
+                (simulator, parameters, memberSettings) ->
+                        simulator.run(config, parameters, memberSettings, launch));
+    }
+
+    /**
+     * Re-predicts the rest of a flight from a measured state (FR-3.3).
+     *
+     * <p>Identical machinery to {@link #run}, different starting point: every member continues from
+     * the state the telemetry reports rather than from a launch assumption. That is what makes an
+     * in-flight footprint a re-prediction rather than a fresh guess — the part of the flight that
+     * has already happened is measured, not modelled, and only the remainder carries dispersion.
+     *
+     * <p>The dispersion spec here should be built around the filter's posterior rather than around
+     * the catalogue: the point of the estimator is that by this moment the parameters are known
+     * better than they were pre-flight, and the footprint should be correspondingly tighter.
+     *
+     * @param config             the balloon configuration
+     * @param spec               how far each parameter is dispersed about the posterior
+     * @param settings           integration settings
+     * @param from               the measured state to continue every member from
+     * @param memberCount        how many members to fly
+     * @param seed               the run seed
+     * @param historySampleCount how many members' trajectories to retain
+     * @return the ensemble result
+     * @throws SkyfixException if too many members fail, or the run is interrupted
+     */
+    public Result runFrom(BalloonConfig config, DispersionSpec spec, SimSettings settings,
+                          BalloonState from, int memberCount, long seed, int historySampleCount)
+            throws SkyfixException {
+        return fly(config, spec, settings, memberCount, seed, historySampleCount,
+                (simulator, parameters, memberSettings) ->
+                        simulator.runFrom(config, parameters, memberSettings, from));
+    }
+
+    private Result fly(BalloonConfig config, DispersionSpec spec, SimSettings settings,
+                       int memberCount, long seed, int historySampleCount, Leg leg)
+            throws SkyfixException {
 
         if (memberCount < 1) {
             throw com.skyfix.domain.error.ValidationException.field("member_count", memberCount,
@@ -130,8 +179,8 @@ public final class EnsembleRunner {
                 final boolean keepHistory = index < historySampleCount;
                 final SimSettings memberSettings = keepHistory ? sampledSettings
                         : discardedSettings;
-                completion.submit(() -> flyOne(config, design[index], memberSettings, launch,
-                        index, keepHistory));
+                completion.submit(() -> flyOne(design[index], memberSettings, index, keepHistory,
+                        leg));
             }
 
             List<Ensemble.Member> members = new ArrayList<>(memberCount);
@@ -163,14 +212,23 @@ public final class EnsembleRunner {
                 }
             }
 
+            // A percentage alone cannot be the whole rule. At 1% a ten-member ensemble would be
+            // failed by its first bad draw, and re-predictions run at 200 members or fewer — so
+            // the threshold would mean "no draw may ever fail", which is not what it is for. The
+            // rule is meant to separate "one unlucky draw from the tail of the dispersion" from
+            // "the configuration is wrong", so a single failure is always allowed and the
+            // percentage takes over once the ensemble is large enough for it to mean something.
             double failurePercent = 100.0 * failures / memberCount;
-            if (failurePercent > FAILURE_THRESHOLD_PERCENT) {
+            int allowed = Math.max(ALWAYS_TOLERATED_FAILURES,
+                    (int) (FAILURE_THRESHOLD_PERCENT / 100.0 * memberCount));
+            if (failures > allowed) {
                 throw new ConvergenceException(String.format(
-                        "%d of %d members failed (%.1f%%), above the %.1f%% threshold; the "
-                                + "configuration or the dispersion spec is at fault rather than "
-                                + "any single draw",
-                        failures, memberCount, failurePercent, FAILURE_THRESHOLD_PERCENT))
+                        "%d of %d members failed (%.1f%%); the threshold for an ensemble this "
+                                + "size is %d, so the configuration or the dispersion spec is at "
+                                + "fault rather than any single draw",
+                        failures, memberCount, failurePercent, allowed))
                         .with("failed", failures)
+                        .with("allowed", allowed)
                         .with("member_count", memberCount);
             }
 
@@ -196,12 +254,24 @@ public final class EnsembleRunner {
         }
     }
 
-    private MemberOutcome flyOne(BalloonConfig config, FlightParameters parameters,
-                                 SimSettings settings, GeoPoint launch, int index,
-                                 boolean keepHistory) {
+    /**
+     * How one member's flight is produced — from the launch point, or onward from a measured state.
+     *
+     * <p>A single seam rather than two copies of the pool, the failure accounting and the
+     * reproducible ordering, all of which are identical either way and none of which should be
+     * duplicated for the sake of one differing call.
+     */
+    @FunctionalInterface
+    private interface Leg {
+        StateHistory fly(FlightSimulator simulator, FlightParameters parameters,
+                         SimSettings settings) throws SkyfixException;
+    }
+
+    private MemberOutcome flyOne(FlightParameters parameters, SimSettings settings, int index,
+                                 boolean keepHistory, Leg leg) {
         try {
-            StateHistory history = new FlightSimulator(atmosphere, windField)
-                    .run(config, parameters, settings, launch);
+            StateHistory history = leg.fly(new FlightSimulator(atmosphere, windField), parameters,
+                    settings);
             GeoPoint landing = history.landingPoint().orElse(null);
             if (landing == null) {
                 return new MemberOutcome(

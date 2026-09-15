@@ -9,8 +9,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -108,7 +106,7 @@ public final class WyomingSoundingReader implements SoundingReader {
                             + MINIMUM_USABLE_LEVELS + " are needed");
         }
         return new SoundingParseResult(stationId, List.copyOf(monotonic),
-                List.copyOf(rejections), sha256(bytes));
+                List.copyOf(rejections), FileDigest.sha256(bytes));
     }
 
     @Override
@@ -211,17 +209,4 @@ public final class WyomingSoundingReader implements SoundingReader {
         return value.isEmpty() ? fallback : value;
     }
 
-    private static String sha256(byte[] bytes) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
-            StringBuilder sb = new StringBuilder(digest.length * 2);
-            for (byte b : digest) {
-                sb.append(Character.forDigit((b >> 4) & 0xF, 16));
-                sb.append(Character.forDigit(b & 0xF, 16));
-            }
-            return sb.toString();
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
-        }
-    }
 }

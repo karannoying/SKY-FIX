@@ -2,6 +2,8 @@ package com.skyfix.cli;
 
 import com.skyfix.app.IngestService;
 import com.skyfix.app.PredictionService;
+import com.skyfix.app.ReplayOptions;
+import com.skyfix.app.ReplayService;
 import com.skyfix.app.RunContext;
 import com.skyfix.app.SynthService;
 import com.skyfix.app.ValidationService;
@@ -13,6 +15,7 @@ import com.skyfix.domain.error.SkyfixException;
 import com.skyfix.domain.error.ValidationException;
 import com.skyfix.io.ConfigLoader;
 import com.skyfix.persistence.Database;
+import com.skyfix.persistence.FlightLog;
 import com.skyfix.persistence.Mission;
 import com.skyfix.persistence.MissionDao;
 import com.skyfix.persistence.RunRecord;
@@ -82,6 +85,7 @@ public final class SkyfixCli {
             return switch (command) {
                 case "ingest" -> ingest(options);
                 case "predict" -> predict(options);
+                case "replay" -> replay(options);
                 case "synth" -> synth(options);
                 case "validate" -> validate(options);
                 case "version" -> version();
@@ -188,6 +192,62 @@ public final class SkyfixCli {
             reporter.info(String.format("  seed %d | git %s | %s dt=%s s | %d members | %d ms",
                     context.seed(), context.gitSha(), settings.integrator(),
                     settings.stepSeconds(), memberCount, context.elapsedMs()));
+            return 0;
+        }
+    }
+
+    private int replay(Map<String, String> options) throws SkyfixException {
+        Path dbPath = Path.of(options.getOrDefault("db", "skyfix.db"));
+        long seed = Long.parseLong(options.getOrDefault("seed", "42"));
+
+        try (Database database = open(dbPath)) {
+            IngestService ingest = new IngestService(database);
+            IngestService.IngestResult ingested = ingest.ingestMission(
+                    requiredPath(options, "mission"), requiredPath(options, "balloon"));
+            Mission mission = ingested.mission();
+
+            IngestService.TelemetryIngestResult log = ingest.ingestTelemetry(mission,
+                    requiredPath(options, "log"),
+                    options.containsKey("recorded") ? FlightLog.RECORDED : FlightLog.SYNTHETIC);
+            reporter.info(String.format("flight log \"%s\" id=%d, %d samples%s",
+                    log.log().name(), log.log().id(), log.series().size(),
+                    log.isNew() ? " (new)" : " (already ingested)"));
+            if (log.series().hasAnomalies()) {
+                reporter.info("  " + log.series().anomalySummary());
+            }
+
+            ConfigLoader loader = new ConfigLoader();
+            SimSettings settings = loader.loadSimSettings(
+                    loader.read(requiredPath(options, "mission")), mission.groundElevationM());
+            if (options.containsKey("step")) {
+                settings = settings.withStepSeconds(Double.parseDouble(options.get("step")));
+            }
+            if (options.containsKey("integrator")) {
+                settings = settings.withIntegrator(options.get("integrator"));
+            }
+
+            Long soundingId = options.containsKey("sounding-id")
+                    ? Long.parseLong(options.get("sounding-id"))
+                    : null;
+            ReplayOptions replayOptions = ReplayOptions.standard()
+                    .withAssimilateEvery(Integer.parseInt(options.getOrDefault("every", "1")))
+                    .withParticleCount(Integer.parseInt(options.getOrDefault("particles",
+                            String.valueOf(ReplayOptions.standard().particleCount()))))
+                    .withRepredictMembers(Integer.parseInt(options.getOrDefault("members",
+                            String.valueOf(ReplayOptions.DEFAULT_REPREDICT_MEMBERS))))
+                    .validated();
+
+            RunContext context = RunContext.start(seed);
+            ReplayService.ReplayResult result = new ReplayService(database).replay(
+                    mission, ingested.config(), soundingId, log.log().id(), log.series(),
+                    settings, replayOptions, context);
+
+            reporter.printReplay(result);
+            reporter.info(String.format(
+                    "  seed %d | git %s | %s dt=%s s | every %d samples | %d ms",
+                    context.seed(), context.gitSha(), settings.integrator(),
+                    settings.stepSeconds(), replayOptions.assimilateEvery(),
+                    context.elapsedMs()));
             return 0;
         }
     }
@@ -348,6 +408,19 @@ public final class SkyfixCli {
                                                  50% and 95% confidence ellipses (default: 1)
                     --seed     <n>               run seed (default: 42)
                     --out      <dir>             export directory (default: out)
+                    --db       <file>            database file (default: skyfix.db)
+
+                  replay     replay a telemetry log through the estimator, re-predicting
+                             the landing footprint as the flight unfolds
+                    --mission  <mission.json>    mission definition        (required)
+                    --balloon  <balloon.json>    balloon configuration     (required)
+                    --log      <flight.csv>      telemetry log to replay   (required)
+                    --sounding-id <n>            wind field to advect with
+                    --every    <n>               assimilate every n-th sample (default: 1)
+                    --particles <n>              filter particles (default: 500, ADR-3)
+                    --members  <n>               members per re-prediction (default: 200)
+                    --recorded                   mark the log as real rather than synthetic
+                    --seed     <n>               run seed (default: 42)
                     --db       <file>            database file (default: skyfix.db)
 
                   synth      regenerate the DS-6 synthetic evaluation set from

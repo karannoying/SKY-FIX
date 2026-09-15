@@ -1,5 +1,6 @@
 package com.skyfix.cli;
 
+import com.skyfix.domain.Posterior;
 import com.skyfix.domain.StateHistory;
 import com.skyfix.domain.error.SkyfixException;
 import com.skyfix.persistence.ValidationResult;
@@ -243,5 +244,73 @@ public final class ConsoleReporter {
 
     private static String truncate(String text, int width) {
         return text.length() <= width ? text : text.substring(0, width - 1) + "...";
+    }
+
+    /**
+     * Prints what a replay recovered: the posterior, the burst, and the final footprint (FR-3.2,
+     * FR-3.3).
+     *
+     * <p>Bands rather than point estimates, because a median with no interval is exactly the
+     * over-confident answer this project exists to replace. A collapsed effective sample size is
+     * called out in words — a reader should not have to know what "ESS" means to see that the
+     * estimate is not worth much.
+     *
+     * @param result what the replay produced
+     */
+    public void printReplay(com.skyfix.app.ReplayService.ReplayResult result) {
+        var posterior = result.finalPosterior();
+        out.println();
+        out.printf(Locale.ROOT, "Run %d - replay estimate, %d particles (wind: %s)%n",
+                result.run().id(), posterior.particleCount(), result.windFieldName());
+        out.println("-".repeat(72));
+
+        result.burst().ifPresentOrElse(
+                b -> out.printf(Locale.ROOT,
+                        "  burst detected  %,10.0f m   at %s (%.0f s after the sign change)%n",
+                        b.altitudeM(), b.epochUtc(), b.detectionLag().toMillis() / 1000.0),
+                () -> out.println("  burst           not detected in this log"));
+        out.printf(Locale.ROOT, "  assimilated     %,10d samples, %d re-predictions%n",
+                result.assimilatedCount(), result.repredictionCount());
+        out.println();
+
+        out.println("  parameter          median        5%         95%");
+        printBand("free lift (kg)", posterior, Posterior.FREE_LIFT);
+        printBand("ascent Cd", posterior, Posterior.ASCENT_CD);
+        printBand("burst scale", posterior, Posterior.BURST_SCALE);
+        printBand("parachute Cd", posterior, Posterior.CHUTE_CD);
+        out.println();
+
+        result.lastUpdate().ifPresent(update -> {
+            out.printf(Locale.ROOT, "  final footprint at T+%.0f s%n", update.flightSeconds());
+            for (var ellipse : update.ellipses()) {
+                out.printf(Locale.ROOT, "  %2.0f%% ellipse   centre %10.6f, %.6f%n",
+                        ellipse.confidence() * 100,
+                        ellipse.centre().latitudeDeg(), ellipse.centre().longitudeDeg());
+                out.printf(Locale.ROOT,
+                        "                 axes %,.0f x %,.0f m at %.0f deg | area %,.1f km2%n",
+                        ellipse.semiMajorM(), ellipse.semiMinorM(), ellipse.azimuthDeg(),
+                        ellipse.areaKm2());
+            }
+            out.println();
+        });
+
+        if (posterior.isDegenerate()) {
+            out.printf(Locale.ROOT,
+                    "  WARNING      effective sample size fell to %.0f of %d particles; the bands "
+                            + "above rest%n               on a handful of hypotheses and should "
+                            + "not be read as a calibrated interval%n",
+                    posterior.effectiveSampleSize(), posterior.particleCount());
+        }
+        out.printf(Locale.ROOT, "  filter       ESS %.0f of %d | %d resamples%n",
+                posterior.effectiveSampleSize(), posterior.particleCount(),
+                posterior.resampleCount());
+        out.printf(Locale.ROOT, "  re-predict   %,d ms mean over %d runs on %d threads%n",
+                result.meanRepredictMs(), result.repredictionCount(), result.threadCount());
+    }
+
+    private void printBand(String label, Posterior posterior, String name) {
+        var band = posterior.band(name);
+        out.printf(Locale.ROOT, "  %-16s %9.4f %9.4f %9.4f%n",
+                label, band.median(), band.p05(), band.p95());
     }
 }

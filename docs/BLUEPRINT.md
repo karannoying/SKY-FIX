@@ -116,8 +116,12 @@ GUI (Swing shell is Stretch); multi-user or networked deployment.
   resampling when ESS < N/2, kernel jitter → posterior + per-update statistics persisted.
   **Accept:** T-V5 thresholds; ESS, resample count and jitter logged at each update.
 - **FR-3.3 Re-prediction on update** — in: posterior + current measured state → forward ensemble
-  from the measured state → ellipse tagged with the update epoch. **Accept:** 200-member
-  re-prediction in ≤5 s, so a 1 Hz log replayed at 10× drops no updates (T-P2).
+  from the measured state → ellipse tagged with the update epoch. **Accept:** one 200-member
+  re-prediction in ≤5 s, issued no more often than once per 50 s of flight time, so a 1 Hz log
+  replayed at 10× drops no updates (T-P2). The two clauses go together and the interval is derived
+  from the budget, not chosen: at 10× a second of flight time affords 100 ms, so a 5 s
+  re-prediction is affordable once per 50 s of flight. A *per-sample* re-prediction under this
+  budget is arithmetically impossible — see ADR-17, which corrects the §8 sequence diagram.
 - **FR-3.4 Burst detection** — in: replay stream → sign change in smoothed vertical rate
   sustained over k samples → burst event, switch to descent model. **Accept:** detected within
   5 s and 150 m with GPS noise σ = 10 m; zero false positives across a 3 s dropout (T-E2).
@@ -259,7 +263,7 @@ sequenceDiagram
         RS->>BD: observe(z)
         alt burst detected (FR-3.4)
             BD-->>RS: BurstEvent(epoch, altitude)
-            RS->>PF: switchPhase(DESCENT)
+            RS->>PF: burstObserved()
         else still ascending
             BD-->>RS: false
         end
@@ -270,10 +274,12 @@ sequenceDiagram
         end
         PF-->>RS: Posterior(median, p05, p95, ESS)
         RS->>DB: saveEstimate(runId, epoch, posterior)
-        RS->>ER: repredict(z.state, posterior, 200 members)
-        ER-->>RS: LandingEllipse(50%, 95%)
-        RS->>DB: saveEllipse(runId, epoch, ellipse)
-        RS-->>User: updated centre, semi-axes, ETA (FR-3.3, <=5 s)
+        alt 50 s of flight time since the last one, or burst, or the final sample (ADR-17)
+            RS->>ER: repredict(z.state, posterior, 200 members)
+            ER-->>RS: LandingEllipse(50%, 95%)
+            RS->>DB: saveEllipse(runId, epoch, ellipse)
+            RS-->>User: updated centre, semi-axes, ETA (FR-3.3, <=5 s)
+        end
     end
     RS->>DB: finalise(runId, wallClockMs, status)
     RS-->>CLI: exit 0
@@ -519,6 +525,7 @@ commands with no network.
 | ADR-7 | Single-sounding wind field | GFS GRIB2; ERA5 | GRIB2 plus a mandatory download violates the offline rule and would eat the budget | Named, quantified error source; `wind_scale` dispersion widens the ellipse to cover it |
 | ADR-8 | CLI + exported PNG charts | JavaFX; Swing from week 1 | No GUI in the lab record; screenshots come from the PNGs and console tables | Stretch Swing view attaches as a `RunListener` with no service changes |
 | ADR-9 | Spherical-Earth advection, haversine scoring | full WGS-84 geodesic; flat Earth | **Measured:** over the three ~400 km mission-scale pairs in `GeodesyTest`, haversine differs from a Vincenty inverse solution on the WGS-84 ellipsoid by at most **0.327%**, far below the wind-field error that dominates the prediction | Measured difference reported as a bounded error term; swapping in a geodesic is a one-class change. The figure is re-measured by `GeodesyTest.sphericalErrorAgainstVincentyOverMissionScale` on every build, so it cannot drift |
+| ADR-17 | Re-prediction on a 50 s flight-time interval | per telemetry sample; fixed wall-clock timer | A per-sample re-prediction cannot meet FR-3.3's own budget: 10× replay affords 100 ms per second of flight, against a 5 s re-prediction. 50 s is that budget divided out, not a guess | Filter updates stay per-sample; ellipse history is a readable series rather than a per-second dump. §8 diagram corrected |
 | ADR-10 | Config identity by SHA-256 on every run | config id only | A run is reproducible only if the exact config is pinned | Any whitespace edit makes a new hash — intended, documented in the README |
 
 ## 15 · Timeline (60 h / 10 weeks)
