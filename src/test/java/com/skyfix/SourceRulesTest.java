@@ -27,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SourceRulesTest {
 
     private static final Path MAIN = Path.of("src", "main", "java");
+    private static final Path TEST = Path.of("src", "test", "java");
 
     private static List<Path> javaSources() throws IOException {
         try (Stream<Path> files = Files.walk(MAIN)) {
@@ -300,6 +301,33 @@ class SourceRulesTest {
         }
         assertThat(undocumented)
                 .as("every public type needs Javadoc saying what it does and in which units")
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("no default-profile test depends on the generated DS-6 telemetry")
+    void noDefaultTestReadsGeneratedTelemetry() throws Exception {
+        // DS-6's telemetry is produced by `run.sh synth` and deliberately not committed --
+        // FR-1.4 guarantees it regenerates byte-identically, and the logs are about 11 MB. A test
+        // that reads one therefore passes on a machine that has run synth and fails on a fresh
+        // clone, which is precisely the offline guarantee CLAUDE.md's second rule makes.
+        //
+        // This is not hypothetical: CorruptInputTest read ds6-flight-01.csv for a truncation
+        // fixture, passed locally for two commits, and failed both CI runs. The evaluations that
+        // legitimately need DS-6 carry @Tag("perf") and are excluded from the default profile, so
+        // the rule is scoped to everything else.
+        List<Path> offenders = new ArrayList<>();
+        try (Stream<Path> files = Files.walk(TEST)) {
+            for (Path file : files.filter(f -> f.toString().endsWith(".java")).sorted().toList()) {
+                String source = Files.readString(file, StandardCharsets.UTF_8);
+                if (source.contains("data/truth/ds6-flight-") && !source.contains("@Tag(\"perf\")")) {
+                    offenders.add(file);
+                }
+            }
+        }
+        assertThat(offenders)
+                .as("tests reading generated DS-6 telemetry without @Tag(\"perf\"); each would "
+                        + "fail on a fresh clone. Build the fixture in the test instead.")
                 .isEmpty();
     }
 }

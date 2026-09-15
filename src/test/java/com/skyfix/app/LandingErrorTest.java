@@ -195,8 +195,7 @@ class LandingErrorTest {
                     DispersionSpec.preflightDefault(balloon), PREFLIGHT_MEMBERS,
                     RunContext.start(seed), tempDir.resolve("out"));
 
-            TelemetrySeries series = new CsvTelemetryReader()
-                    .read(Path.of("data/truth", name + ".csv"));
+            TelemetrySeries series = new CsvTelemetryReader().read(ds6(name));
             var replay = new ReplayService(database).replay(mission, stored, null, TRUTH_WIND,
                     null, series, settings, ReplayOptions.standard()
                             .withAssimilateEvery(ASSIMILATE_EVERY)
@@ -229,5 +228,24 @@ class LandingErrorTest {
             }
         }
         return rows;
+    }
+
+    /**
+     * The path to a DS-6 flight, checked to exist first.
+     *
+     * <p>DS-6's telemetry is generated rather than committed (FR-1.4), so on a fresh clone these
+     * files are absent until `run.sh synth` has been run. A raw {@code NoSuchFileException} names
+     * the file but not the remedy, and the remedy is one command.
+     */
+    private static Path ds6(String name) {
+        Path path = Path.of("data/truth", name + ".csv");
+        if (!java.nio.file.Files.exists(path)) {
+            throw new IllegalStateException(
+                    "DS-6 telemetry is missing: " + path + ". It is generated rather than "
+                            + "committed, so run it first:\n\n"
+                            + "  ./scripts/run.sh synth --mission data/missions/mission.json "
+                            + "--balloon data/missions/balloon.json\n");
+        }
+        return path;
     }
 }
