@@ -1,5 +1,6 @@
 package com.skyfix.cli;
 
+import com.skyfix.domain.LandingEllipse;
 import com.skyfix.domain.Posterior;
 import com.skyfix.domain.StateHistory;
 import com.skyfix.domain.error.SkyfixException;
@@ -161,9 +162,8 @@ public final class ConsoleReporter {
                     ellipse.confidence() * 100,
                     ellipse.centre().latitudeDeg(), ellipse.centre().longitudeDeg());
             out.printf(Locale.ROOT,
-                    "                 axes %,.0f x %,.0f m at %.0f deg | area %,.1f km2%n",
-                    ellipse.semiMajorM(), ellipse.semiMinorM(), ellipse.azimuthDeg(),
-                    ellipse.areaKm2());
+                    "                 axes %s at %.0f deg | area %s%n",
+                    axes(ellipse), ellipse.azimuthDeg(), area(ellipse));
         }
 
         out.println();
@@ -287,9 +287,8 @@ public final class ConsoleReporter {
                         ellipse.confidence() * 100,
                         ellipse.centre().latitudeDeg(), ellipse.centre().longitudeDeg());
                 out.printf(Locale.ROOT,
-                        "                 axes %,.0f x %,.0f m at %.0f deg | area %,.1f km2%n",
-                        ellipse.semiMajorM(), ellipse.semiMinorM(), ellipse.azimuthDeg(),
-                        ellipse.areaKm2());
+                        "                 axes %s at %.0f deg | area %s%n",
+                        axes(ellipse), ellipse.azimuthDeg(), area(ellipse));
             }
             out.println();
         });
@@ -312,5 +311,39 @@ public final class ConsoleReporter {
         var band = posterior.band(name);
         out.printf(Locale.ROOT, "  %-16s %9.4f %9.4f %9.4f%n",
                 label, band.median(), band.p05(), band.p95());
+    }
+
+    /**
+     * The ellipse's semi-axes, with enough precision to stay meaningful when one of them is small.
+     *
+     * <p>A footprint minutes from touchdown genuinely has a sub-metre minor axis, and rounding that
+     * to "0 m" reads as a defect rather than as the certainty it actually represents.
+     *
+     * @param ellipse the ellipse
+     * @return the axes as a printable pair
+     */
+    private static String axes(LandingEllipse ellipse) {
+        return String.format(Locale.ROOT, "%s x %s",
+                distance(ellipse.semiMajorM()), distance(ellipse.semiMinorM()));
+    }
+
+    /** A distance printed at a precision that suits its size. */
+    private static String distance(double metres) {
+        if (metres >= 10_000.0) {
+            return String.format(Locale.ROOT, "%,.1f km", metres / 1000.0);
+        }
+        if (metres >= 10.0) {
+            return String.format(Locale.ROOT, "%,.0f m", metres);
+        }
+        return String.format(Locale.ROOT, "%.2f m", metres);
+    }
+
+    /** An ellipse area in the unit that keeps it readable. */
+    private static String area(LandingEllipse ellipse) {
+        double km2 = ellipse.areaKm2();
+        if (km2 >= 0.01) {
+            return String.format(Locale.ROOT, "%,.2f km2", km2);
+        }
+        return String.format(Locale.ROOT, "%,.0f m2", km2 * 1_000_000.0);
     }
 }

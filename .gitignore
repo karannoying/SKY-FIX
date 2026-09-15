@@ -14,3 +14,7 @@ out/
 # output), so the ~11 MB of generated logs stays out of the repository. The seed file and the
 # truth manifest are committed, because those are the dataset definition and its summary.
 data/truth/ds6-flight-*.csv
+
+# Python bytecode from the report build script.
+__pycache__/
+*.pyc

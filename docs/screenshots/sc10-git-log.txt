@@ -1,0 +1,22 @@
+$ git log --oneline --graph -25
+* 0b49605 test(core,io,cli): T-V7 ellipse calibration, T-E3 corrupt inputs, CLI replay cases
+* aaa3e27 feat(app,io): prediction-error scoring, T-V6, and the PL-3/PL-4/PL-5 charts
+* b982564 feat(estimation): pool independent filters so the band is a credible interval
+* 06ac192 test(estimation): T-V5 parameter recovery across all twenty DS-6 flights
+* 18efccb feat(app,persistence): replay service, estimate persistence and the CLI replay command
+* 06416bb feat(estimation): bootstrap particle filter over the four flight parameters
+* d86c770 feat(estimation): measurement model, resampler and posterior
+* 8ea883b feat(io,estimation): telemetry replay, DS-6 generator and burst detection
+* 607beda docs: ADR-16 on chart design, HANDOFF ready for week 7
+* 1907486 feat(io): PlotExporter for PL-1, PL-2 and PL-6
+* 50f6bef perf: measure T-P1 and T-P2 without instrumentation; NFR-1 met
+* ac5d679 feat(flight): ensemble runner, landing ellipse and the footprint path
+* 03ba28f feat(flight): Latin-hypercube dispersion sampler and its distributions
+* 5c6770f docs: update HANDOFF for the v0.1-mvp state
+* 7b136da feat(cli): ingest, predict and validate wired end to end
+* 1580662 feat(persistence): SQLite, schema initialiser, DAOs and the source-rule scan
+* b664fbc feat(flight): phases, simulator and wind fields, with a stability guard
+* 3b2ad93 feat(atmos): USSA-1976 layer model and the integrator family
+* 883eb7b feat(domain): value types, builders and the exception hierarchy
+* 4cba998 chore: project scaffold, Maven wrapper, CI
+* c97a694 Initial commit

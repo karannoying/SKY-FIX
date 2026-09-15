@@ -239,7 +239,28 @@ Work in order. The MVP is tagged, so everything below is additive.
    - T-V5's ascent-Cd criterion still needs a decision (see step 4) — it is measured and printed,
      not gated, and BLUEPRINT §10 stands until someone rules on it.
 
-6. **Report, screenshots SC-1…SC-10, compliance checklist.** Week 10, tag `v1.0-submission`.
+6. ~~Report, screenshots SC-1…SC-10, compliance checklist.~~ **Done.** Tag `v1.0-submission`.
+
+   `docs/report/report.pdf` is 35 pages across the 15 required sections plus a compliance checklist
+   and a reproduce-every-number appendix, built by `python3 scripts/build-report.py`. The build
+   **inlines** the console transcripts from `docs/screenshots/` rather than quoting them, so the
+   report cannot drift from the runs that produced it — which is the structural version of
+   CLAUDE.md's fifth rule.
+
+   `docs/screenshots/` holds SC-1…SC-8, SC-10…SC-12 as verbatim stdout plus the exported charts at
+   1460 px or wider. `docs/diagrams/` now exists — it was empty, which rule 6 would not have
+   allowed at submission — with the architecture diagram as SVG and the replay sequence as Mermaid,
+   the latter carrying ADR-17's correction.
+
+   **What is genuinely not done, and is listed in the report's own §15 rather than hidden:**
+   - **SC-9** needs a capture of a GitHub Actions run list, which only exists once the branch has
+     been pushed and the workflow has run. Everything else is generated.
+   - **T-V5's ascent-Cd criterion** still needs a decision from the course owner. Measured and
+     printed, not gated; BLUEPRINT §10 stands.
+   - Two references need their full citations checked.
+   - The `verify:` markers on DS-1, DS-3, DS-4 and the IUPAC molar masses are unchanged; the build
+     environment could not reach the sources. `grep -rn "verify:" src data docs` lists them.
+   - Parachute-drag recovery is bimodal and unexplained; burst-scale band coverage is 15/20.
 
 **Standing constraints:** no scientific libraries in `src/main`, no network in any test, SI units
 internally, `PreparedStatement` only, requirement ID in every commit body, and a green commit

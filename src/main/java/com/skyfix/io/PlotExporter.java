@@ -42,12 +42,17 @@ import java.util.Map;
  */
 public final class PlotExporter {
 
-    /** Width of an exported chart, pixels. */
-    public static final int WIDTH = 1000;
+    /**
+     * Width of an exported chart, pixels.
+     *
+     * <p>Sized for the report rather than for the screen: BLUEPRINT §16 asks for captures of at
+     * least 1440 px, and a chart placed at half a page in a printed document wants the pixels.
+     */
+    public static final int WIDTH = 1460;
     /** Height of an exported chart, pixels. */
-    public static final int HEIGHT = 620;
+    public static final int HEIGHT = 900;
     /** Side of a square chart, used where the axes must share a scale. */
-    public static final int SQUARE = 820;
+    public static final int SQUARE = 1200;
 
     private PlotExporter() {
     }

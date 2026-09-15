@@ -1,18 +1,26 @@
 # SKYFIX
 
-Predicts where a high-altitude balloon payload will land, and — once the estimator lands — re-estimates
-the flight's real parameters from replayed telemetry and re-predicts the footprint as a confidence
-ellipse.
+Predicts where a high-altitude balloon payload will land as a **confidence ellipse**, then re-estimates
+the flight's real parameters from replayed telemetry with a particle filter and re-predicts the
+footprint as the flight unfolds.
 
 Submission for **CSE2006 Programming in Java**, VIT Bhopal University — Kumar Karan Bohidar,
 Reg. No. 25BAS10049.
 
 ## What it does today
 
-This is **`v0.2-ensemble`**: ingest → atmosphere → flight model → Monte Carlo footprint →
-persistence → CSV/GeoJSON export, with the reference-case validation suite wired to a CLI command.
-The particle-filter estimator is specified in `docs/BLUEPRINT.md` and is not implemented yet;
-`validate` lists the cases that depend on it by name rather than passing silently.
+This is **`v1.0-submission`**, and the whole path is built: ingest → atmosphere → flight model →
+Monte Carlo footprint → telemetry replay → particle-filter estimation → re-prediction →
+persistence → CSV/GeoJSON/PNG export, with the reference-case validation suite wired to a CLI
+command.
+
+The three headline results, all measured across the twenty DS-6 flights:
+
+| | result | required |
+|---|---|---|
+| **T-V5** burst altitude recovered | **20 / 20** inside 500 m, 17 inside 130 m | ≥ 18 / 20 |
+| **T-V6** landing-error reduction at burst | **74.0%** median, from a 15.4 km frozen error | ≥ 30% |
+| **T-V7** 95% ellipse containment | **94.6%** in-sample, **94.0%** out-of-sample | 0.90–0.98 |
 
 | Capability | Status |
 |---|---|
@@ -26,8 +34,11 @@ The particle-filter estimator is specified in `docs/BLUEPRINT.md` and is not imp
 | Telemetry ingest and replay (FR-1.2) | done, validated by T-E5, T-P4 |
 | Synthetic flight generator, DS-6 (FR-1.4) | done, validated by `SynthServiceTest` |
 | Burst detection (FR-3.4) | done, validated by T-E2 |
-| Particle-filter parameter estimation (FR-3.1–3.3) | **not yet** — week 8 |
-| PNG plots PL-1, PL-2, PL-6 (FR-4.2) | done, validated by `PlotExporterTest` |
+| Particle-filter parameter estimation (FR-3.1–3.3) | done, validated by T-V5, `ParticleFilterTest` |
+| Pooled filter bank for calibrated bands (ADR-18) | done, validated by `FilterBankTest` |
+| In-flight re-prediction and scoring (FR-3.3, FR-4.1) | done, validated by T-V6, T-P2 |
+| CLI `replay` | done, validated by `SkyfixCliTest` |
+| PNG plots PL-1…PL-6 (FR-4.2) | done, validated by `PlotExporterTest` |
 
 ## Requirements
 
@@ -49,6 +60,11 @@ git clone <repository-url> && cd SKY-FIX
 # a dispersed footprint rather than a single point: 50% and 95% confidence ellipses
 ./scripts/run.sh predict --mission data/missions/mission.json \
                          --balloon data/missions/balloon.json --sounding-id 1 --members 1000
+
+# replay a telemetry log: estimate the flight's parameters and re-predict the footprint
+./scripts/run.sh replay  --mission data/missions/mission.json \
+                         --balloon data/missions/balloon.json \
+                         --log data/truth/ds6-flight-01.csv --sounding-id 1 --every 20
 
 # regenerate the DS-6 synthetic evaluation set (20 flights with known truth)
 ./scripts/run.sh synth   --mission data/missions/mission.json \
@@ -97,8 +113,14 @@ to `out/skyfix.0.log`; the console carries warnings and above.
 ./mvnw verify -Pperf # adds timing and reproducibility tests
 ```
 
-Measured line coverage: `core.atmos` **100%**, `core.flight` **96.4%** (gate: 80% on `core.*` and
-`estimation`), `domain` 96.4%, `io` 90.3%, `app` 86.4%.
+Measured line coverage, from the JaCoCo report the gate reads: `core.atmos` **100%**,
+`core.flight` **93.6%**, `estimation` **91.7%** (gate: 80% on `core.*` and `estimation`), `domain`
+93.6%, `app` 71.0%, `io` 69.4%, `persistence` 68.7%, `cli` 48.0%. The last four sit outside the
+strict gate by design (BLUEPRINT §11) and are covered by T-U1, T-E1 and T-E3 at the command
+surface.
+
+302 tests run in about 5 minutes; the perf-tagged evaluations (T-V5, T-V6, T-V7, T-P*) add roughly
+another 25 and are excluded by default.
 
 ## Validation results
 
@@ -118,7 +140,10 @@ this table; the figures below are its current output.
 | T-P4 | 10,000 telemetry samples parsed | 3 s | **0.11 s** |
 | T-E2 | Burst detection, 10 m GPS noise, dropouts | 5 s, 150 m, 0 false positives | **0.0–2.3 s, 1–36 m, none** |
 | T-R1 | Same seed, 1 thread vs 4 threads, identical ellipse | 1e-9 | **met** |
-| T-V5–T-V7 | Parameter recovery, error reduction, ellipse containment | — | not yet implemented (weeks 7–9) |
+| T-V5 | Burst altitude recovered over 20 DS-6 flights | 500 m on ≥18/20 | **20/20**, 17 inside 130 m, worst 461 m |
+| T-V6 | Landing-error reduction at burst, live against frozen | 30% median | **74.0%**, from a 15.4 km median frozen error |
+| T-V7 | 95% ellipse containment against a real ensemble | 0.90–0.98 | **0.946** in-sample, **0.940** out-of-sample |
+| Band calibration | 5–95% posterior bands containing the truth | ~18/20 nominal | **15–17/20** pooled; **0/20** with a single filter (ADR-18) |
 
 Two figures the blueprint left open are now measured rather than estimated:
 
@@ -142,12 +167,30 @@ own limit by applying itself to `y' = λy` — nothing is transcribed. See `docs
 
 ## Known limitations
 
-- **The footprint assumes the landing scatter is roughly Gaussian.** The ellipse comes from a
-  covariance fit, so a strongly sheared wind could produce a scatter it describes poorly. A very
-  high aspect ratio is the signal — a constant-wind ensemble gives one in the thousands, because
-  every bit of the dispersion then lands along a single axis. T-V7 will measure containment against
-  real profiles; if the assumption fails there, the honest fix is a convex hull or a density
-  contour, reported as such (ADR-14).
+- **The landing footprint is effectively one-dimensional, and the 50% ellipse over-covers because
+  of it.** T-V7 measured the 95% ellipse at 0.946 in-sample and 0.940 out-of-sample, comfortably
+  inside its window — but the fitted footprint comes out 76.4 × 0.5 km, an aspect ratio near 150,
+  because this sounding's wind direction barely turns with altitude. Almost all the uncertainty is
+  about *how long the flight lasts*, not about where it goes. A chi-square scaling for two degrees
+  of freedom is therefore generous when the cloud has closer to one, which is why the 50% ellipse
+  contains about 56% rather than 50%, converging towards nominal as the confidence rises. The
+  ellipse is the right shape for the quantity it reports; it is simply describing a nearly linear
+  cloud.
+- **Ascent drag cannot be recovered to 5% from this observation set, and no estimator could.** Free
+  lift and ascent drag trade off almost exactly: a 5% error in ascent Cd absorbed by a 6% change in
+  free lift reproduces the whole flight's altitude profile to 10.5 m RMS — the GPS noise itself —
+  and over the ascent alone a 20% error matches to 0.44 m. The two recovered values slide together
+  on every one of the twenty flights. `ParameterRecoveryTest` therefore measures and prints ascent
+  Cd rather than gating on it, with ADR-3 carrying the identifiability table as the stated reason.
+  Burst altitude, the quantity a recovery team acts on, is recovered on 20 of 20.
+- **A single particle filter's bands are not credible intervals.** Measured: 0/20 coverage. The
+  dominant error is Monte Carlo rather than statistical — eight filters differing only in seed
+  disagreed by about a hundred times their own reported band width — so the posterior is pooled
+  from a bank of independent filters (ADR-18), which takes coverage to 15–17/20 against a nominal
+  18/20. Bands are still slightly narrow; burst scale is the weakest at 15/20.
+- **Parachute drag recovery is bimodal.** Sixteen of twenty flights recover it to under 5%, most of
+  those to under 1%; four land between 15% and 26% out. Not correlated with the flight's wind-scale
+  error, its burst-altitude error, or anything else checked so far. Reported, not gated.
 - **A single sounding stands in for a 4-D wind field** (ADR-7). Over a long drift the profile is
   assumed to hold along the whole track. This is the model's largest named error source; the
   `wind_scale` dispersion exists to carry it into the footprint once the ensemble lands.
@@ -165,9 +208,40 @@ own limit by applying itself to `y' = λy` — nothing is transcribed. See `docs
   0.00987%. The header carries a `verify:` marker requiring hand transcription from NOAA-S/T 76-1562
   Table I before the report cites it.
 
-## Screenshots
+## Screenshots and results
 
-[PLACEHOLDER — SC-1…SC-10, due after `v0.4-validated` per BLUEPRINT §16.]
+`docs/screenshots/` holds the captures BLUEPRINT §16 asks for, all produced by the commands above
+after `v0.4-validated`. The console captures are the programs' real stdout, saved verbatim; the
+charts are the PNGs the exporters write, at 1460 px or wider.
+
+| ID | Artefact | Source |
+|---|---|---|
+| SC-1 | `validate` reference-case table | `sc1-validate.txt` |
+| SC-2 | ingest, naming the sounding and its rejected lines | `sc2-ingest.txt` |
+| SC-3 | 1,000-member footprint, with PL-1 and PL-2 | `sc3-footprint.txt`, `out/run-*/pl1-*.png`, `pl2-*.png` |
+| SC-4 | `replay`: posterior bands, burst, re-prediction timing | `sc4-replay.txt`, `out/run-*/pl3-*.png` |
+| SC-5 | T-V6 error-reduction table, live against frozen | `sc5-error-reduction.txt` |
+| SC-6 | the same seed reproducing the same ellipse | `sc6-reproducibility.txt` |
+| SC-7 | a deliberate config failure, exit code 2, no stack trace | `sc7-config-failure.txt` |
+| SC-8 | JaCoCo coverage summary | `sc8-coverage.txt` |
+| SC-9 | CI history | `[PLACEHOLDER — a capture of the GitHub Actions run list, which only exists once the branch is pushed and the workflow has run.]` |
+| SC-10 | `git log --oneline --graph` | `sc10-git-log.txt` |
+| SC-11 | T-V5 recovery over all twenty flights | `sc11-tv5-recovery.txt` |
+| SC-12 | T-V7 ellipse containment | `sc12-tv7-calibration.txt` |
+| — | PL-4 landing error, PL-5 calibration | `pl4-landing-error.png`, `pl5-ellipse-calibration.png` |
+
+## Report
+
+`docs/report/report.pdf` — 35 pages, 15 sections plus a compliance checklist and a
+reproduce-every-number appendix. Rebuild it with:
+
+```bash
+python3 scripts/build-report.py
+```
+
+The build inlines the console transcripts from `docs/screenshots/` rather than quoting them, so the
+report cannot disagree with the runs that produced it. It needs only Python 3 and a browser; if no
+Chrome or Chromium is found it still writes `report.html`, which prints to PDF from any browser.
 
 ## Documentation
 
