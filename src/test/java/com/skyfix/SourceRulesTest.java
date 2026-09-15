@@ -268,6 +268,62 @@ class SourceRulesTest {
     }
 
     @Test
+    @DisplayName("CLAUDE.md rule 5: every marker in src/main and data has a ledger entry")
+    void everyMarkerHasARouteToClearingIt() throws Exception {
+        // The test above proves the markers are visible. Visible is not the same as actionable: a
+        // bare "verify: check this" leaves the next person to rediscover which document, which
+        // table, and what the number ought to come out as. docs/VERIFICATION.md carries that for
+        // every marker, and this test is what stops the two drifting apart -- a new marker with no
+        // entry fails the build, which is the only way a ledger like this stays true.
+        String ledger = Files.readString(Path.of("docs", "VERIFICATION.md"), StandardCharsets.UTF_8);
+
+        List<Path> marked = new ArrayList<>();
+        for (Path file : javaSources()) {
+            if (hasMarker(file)) {
+                marked.add(file);
+            }
+        }
+        try (Stream<Path> files = Files.walk(Path.of("data"))) {
+            for (Path file : files.filter(Files::isRegularFile).sorted().toList()) {
+                // DS-6's generated telemetry is large, absent on a fresh clone, and carries its own
+                // synthetic banner rather than a marker; reading all 11 MB of it proves nothing.
+                if (file.toString().contains("truth")) {
+                    continue;
+                }
+                if (hasMarker(file)) {
+                    marked.add(file);
+                }
+            }
+        }
+
+        assertThat(marked)
+                .as("the scan must find the known markers, or it is not scanning anything")
+                .isNotEmpty();
+
+        List<String> unlisted = new ArrayList<>();
+        for (Path file : marked) {
+            if (!ledger.contains(file.getFileName().toString())) {
+                unlisted.add(file.toString());
+            }
+        }
+        assertThat(unlisted)
+                .as("every verify:/PLACEHOLDER marker needs an entry in docs/VERIFICATION.md "
+                        + "saying which source clears it and what the check is")
+                .isEmpty();
+    }
+
+    /** Whether a file carries an unverified-claim marker, ignoring files that cannot be read. */
+    private static boolean hasMarker(Path file) throws IOException {
+        String text;
+        try {
+            text = Files.readString(file, StandardCharsets.UTF_8);
+        } catch (java.io.UncheckedIOException | java.nio.charset.MalformedInputException e) {
+            return false; // a binary file carries no marker
+        }
+        return text.contains("verify:") || text.contains("[PLACEHOLDER");
+    }
+
+    @Test
     @DisplayName("Every public type in src/main carries Javadoc")
     void publicTypesAreDocumented() throws Exception {
         List<String> undocumented = new ArrayList<>();

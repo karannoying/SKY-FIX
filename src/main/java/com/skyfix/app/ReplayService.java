@@ -65,20 +65,21 @@ public final class ReplayService {
     private static final Logger LOG = Logger.getLogger(ReplayService.class.getName());
 
     /**
-     * How far the re-prediction disperses each parameter about the posterior median.
+     * Floor on the relative spread the re-prediction disperses a parameter over.
      *
-     * <p>Much tighter than the pre-flight spread, which is the entire point: by mid-flight the
-     * balloon has told us what it is, so the footprint should be correspondingly smaller. The
-     * exception is the wind scale, which the filter does not estimate (ADR-3) and which therefore
-     * keeps its full pre-flight dispersion — it is the error source that does not shrink just
-     * because the balloon has been watched for an hour (ADR-7).
+     * <p>The spread itself is not a constant — it is the width of the filter's own posterior band
+     * for that parameter, which is the whole point of having one. This is only a floor, so that a
+     * band which has collapsed cannot produce an ensemble with no dispersion at all and a footprint
+     * claiming certainty it has not earned.
      *
-     * <p>verify: these residual spreads are taken from the width of the filter's own posterior
-     * bands on the DS-6 flights and should be replaced by the T-V6 calibration once it exists.
-     * A spread that is too tight here produces a confident, wrong ellipse, which is the worst
-     * failure this project can have.
+     * <p>Measured across the twenty DS-6 flights, the posterior's relative sigma per parameter is
+     * 0.104 for free lift, 0.081 for ascent Cd, 0.022 for burst scale and 0.115 for parachute drag.
+     * The floor sits below all of them.
      */
-    private static final double POSTERIOR_RELATIVE_SIGMA = 0.05;
+    private static final double MINIMUM_RELATIVE_SIGMA = 0.01;
+
+    /** Standard deviations spanned by a 5–95% interval of a normal distribution. */
+    private static final double BAND_SIGMAS = 3.29;
 
     /** Wind-scale dispersion, unchanged from pre-flight (ADR-7). */
     private static final double WIND_SCALE_SIGMA = 0.20;
@@ -382,25 +383,52 @@ public final class ReplayService {
     }
 
     /**
-     * A dispersion spec centred on the posterior rather than on the catalogue.
+     * A dispersion spec centred on the posterior, and as wide as the posterior says it should be.
      *
-     * <p>Every parameter keeps a residual spread, because a posterior median is not a fact; the
-     * wind scale keeps its full pre-flight spread, because the filter never estimated it.
+     * <p>The spread of each parameter is taken from the width of its own 5–95% band rather than
+     * from a constant. That is the only defensible choice once the bands are calibrated (ADR-18):
+     * the filter has just measured how well it knows each parameter, and a re-prediction that
+     * disperses over some other figure is either throwing that away or contradicting it.
+     *
+     * <p>It also fixes a real over-confidence. The constant this replaced was 0.05 relative for
+     * every parameter, against measured posterior sigmas of 0.104 for free lift, 0.081 for ascent
+     * Cd, 0.022 for burst scale and 0.115 for parachute drag over the twenty DS-6 flights — so the
+     * re-predicted footprint was dispersing free lift and parachute drag over roughly half the
+     * uncertainty the filter itself reported, and burst scale over more than twice it.
+     *
+     * <p>The wind scale keeps its full pre-flight spread, because the filter never estimated it
+     * (ADR-3) and no amount of watching the balloon shrinks it (ADR-7).
      */
     private static DispersionSpec aroundPosterior(BalloonConfig balloon, Posterior posterior)
             throws ValidationException {
         FlightParameters median = posterior.medianParameters(balloon.burstDiameterM(), 1.0);
         return DispersionSpec.around(balloon)
-                .freeLiftKg(Distribution.TruncatedNormal.relative(
-                        median.freeLiftKg(), POSTERIOR_RELATIVE_SIGMA, 3.0))
-                .ascentCd(Distribution.TruncatedNormal.relative(
-                        median.ascentCd(), POSTERIOR_RELATIVE_SIGMA, 3.0))
-                .burstDiameterM(Distribution.TruncatedNormal.relative(
-                        median.burstDiameterM(), POSTERIOR_RELATIVE_SIGMA, 3.0))
-                .chuteCd(Distribution.TruncatedNormal.relative(
-                        median.chuteCd(), POSTERIOR_RELATIVE_SIGMA, 3.0))
+                .freeLiftKg(posteriorSpread(posterior, Posterior.FREE_LIFT, median.freeLiftKg()))
+                .ascentCd(posteriorSpread(posterior, Posterior.ASCENT_CD, median.ascentCd()))
+                .burstDiameterM(posteriorSpread(posterior, Posterior.BURST_SCALE,
+                        median.burstDiameterM()))
+                .chuteCd(posteriorSpread(posterior, Posterior.CHUTE_CD, median.chuteCd()))
                 .windScale(Distribution.TruncatedNormal.symmetric(1.0, WIND_SCALE_SIGMA, 3.0))
                 .build();
+    }
+
+    /**
+     * One parameter's dispersion, taken from the width of its posterior band.
+     *
+     * <p>A 5–95% interval spans 3.29 standard deviations of a normal, so that is what converts the
+     * reported band back into the sigma an ensemble disperses over. The burst scale is reported as
+     * a multiple of the catalogue diameter while the ensemble needs metres, so its relative width
+     * is applied to the median in metres — which is why this works from the <em>relative</em> width
+     * rather than the absolute one.
+     */
+    private static Distribution posteriorSpread(Posterior posterior, String name, double medianValue)
+            throws ValidationException {
+        Posterior.Band band = posterior.band(name);
+        double relative = Math.abs(band.median()) > 0.0
+                ? (band.width() / BAND_SIGMAS) / Math.abs(band.median())
+                : MINIMUM_RELATIVE_SIGMA;
+        return Distribution.TruncatedNormal.relative(medianValue,
+                Math.max(relative, MINIMUM_RELATIVE_SIGMA), 3.0);
     }
 
     private WindField resolveWindField(Long soundingId) throws SkyfixException {

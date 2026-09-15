@@ -35,9 +35,26 @@ public final class GaussianMeasurementModel implements MeasurementModel {
     /**
      * How much wider the altitude sigma is for a barometric altitude than for a GPS one.
      *
-     * <p>verify: this is an engineering judgement, not a measurement. It should be replaced with a
-     * figure fitted from the DS-6 flights, where both the true altitude and the pressure-derived
-     * one are known for every sample, so the actual spread of the difference can be computed.
+     * <p><strong>Measured on DS-6: 1.71.</strong> Across 158,753 samples carrying both a GPS
+     * altitude and a pressure reading, the pressure altitude differs from the GPS altitude with a
+     * mean of −0.01 m and a standard deviation of 17.12 m, against the 10 m GPS sigma.
+     *
+     * <p>That measurement settles only half the question, and the half it settles is the smaller
+     * one. DS-6's pressures are generated from the <em>same</em> USSA-1976 model this reader
+     * inverts, so the round trip contains the barometer's own noise and nothing else — the mean of
+     * −0.01 m is the giveaway. What it cannot contain is the error this factor mainly exists for:
+     * a pressure altitude is where the <em>standard</em> atmosphere puts that pressure, and the
+     * day's profile is not the standard one. On a real flight that bias is systematic and can run
+     * to hundreds of metres in the troposphere.
+     *
+     * <p>So 1.71 is a floor, not an answer, and the value stays at 4.0. The consequence on DS-6 is
+     * stated rather than hidden: the barometric channel is weighted more loosely there than the
+     * data strictly requires, which is the conservative direction — it costs a little information
+     * on dropout samples and cannot cause the filter to chase an atmospheric offset.
+     *
+     * <p>verify: the model-bias term needs a real flight log carrying both GPS and barometric
+     * altitude through a day whose profile departs from the standard atmosphere. No synthetic
+     * dataset generated from the same atmosphere model can supply it.
      */
     public static final double PRESSURE_ALTITUDE_SIGMA_FACTOR = 4.0;
 

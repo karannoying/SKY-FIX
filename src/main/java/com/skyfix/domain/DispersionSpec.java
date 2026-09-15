@@ -50,9 +50,15 @@ public final class DispersionSpec {
      * The default pre-flight dispersion: the spreads a catalogue leaves a team guessing at.
      *
      * <p>verify: these spreads are engineering estimates of how well each quantity is known before
-     * flight, not measured figures. They must be justified in the report — ideally replaced by
-     * spreads fitted to the posterior the estimator recovers across the DS-6 flights, which is a
-     * measurement rather than a guess.
+     * flight, not measured figures, and they must be justified in the report.
+     *
+     * <p>An earlier note here proposed fitting them to the posterior the estimator recovers across
+     * the DS-6 flights. <strong>That would be circular and the proposal is withdrawn.</strong>
+     * DS-6's truth parameters are themselves drawn from this specification, so a spread fitted to
+     * them measures this constructor and nothing else. The quantity these numbers describe — how
+     * well a team knows its balloon <em>before</em> launch — cannot be established from synthetic
+     * flights at all. It needs either a manufacturer's stated tolerance or a population of real
+     * flights with recorded fill data, and until one exists these remain stated estimates.
      *
      * @param config the nominal configuration to disperse around
      * @return the default specification
