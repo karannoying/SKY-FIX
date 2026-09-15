@@ -23,10 +23,16 @@ and a 45 km ascent with ~400 km of drift.
 
 ## Current Progress
 
-**Weeks 1–7 are built and green.** `predict --members N` produces a landing footprint — 50% and
-95% confidence ellipses — rather than a single point, which is objective O2; the charts are
-exported; and DS-6, the twenty-flight synthetic evaluation set that O3 and O4 are scored on,
-regenerates byte-identically from a committed seed file. What remains is the estimator itself.
+**Weeks 1–10 are built and green; the project is at `v1.0-submission`.** `predict --members N`
+produces a landing footprint — 50% and 95% confidence ellipses — rather than a single point, which
+is objective O2. `replay` estimates the four flight parameters from a log with a pooled bank of
+particle filters and re-predicts the footprint as the flight unfolds (O3, O4). DS-6, the
+twenty-flight synthetic evaluation set O3 and O4 are scored on, regenerates byte-identically from a
+committed seed file. The 15-section report, the screenshots and the diagrams are committed.
+
+What is left is not code: two acceptance criteria need a decision from the course owner (T-V5's
+ascent-Cd criterion), the five milestone tags are created locally but the relay's push policy
+refuses `refs/tags/*`, and the verification ledger's entries need a machine with network access.
 
 A fresh clone plus a JDK runs the whole path offline in three commands. `./mvnw verify` passes
 with the JaCoCo gate. `./scripts/run.sh validate` reports **84 checks, 84 passed**.
@@ -228,9 +234,15 @@ Work in order. The MVP is tagged, so everything below is additive.
    members on a normal ascent; and `EnsembleRunner`'s 1% failure threshold failed any ensemble
    under a hundred members on its first bad draw.
 
-   Coverage: `estimation` **91.7%**, `core.atmos` 100%, `core.flight` 93.6%, `domain` 93.6% — the
-   80% gate passes. `io` 69.4% and `persistence` 68.7% are outside the strict gate by design
-   (BLUEPRINT §11); `cli` is 48% + the new replay cases.
+   Coverage, re-measured from a clean `target/` on 2026-09-15: `estimation` **91.7%**,
+   `core.atmos` 100%, `core.flight` 93.1%, `domain` 93.7% — the 80% gate passes. Outside the strict
+   gate by design (BLUEPRINT §11): `io` 74.9%, `app` 73.8%, `persistence` 73.2%, `cli` 69.9%.
+   81.6% overall.
+
+   **Measure it from a clean `target/`.** JaCoCo's agent appends to an existing `jacoco.exec`, so
+   generating the report after a `-Dtest=SomeClass` run shows that one class's coverage under the
+   whole project's name. An earlier capture of SC-8 was taken that way and understated `cli` and
+   `io` by more than twenty points each. `rm -f target/jacoco.exec` before `./mvnw verify`.
 
    **Still open, and worth an hour each before the report:**
    - Parachute drag is bimodal — sixteen flights under 5%, most under 1%, four at 15-26%. Not
@@ -241,7 +253,7 @@ Work in order. The MVP is tagged, so everything below is additive.
 
 6. ~~Report, screenshots SC-1…SC-10, compliance checklist.~~ **Done.** Tag `v1.0-submission`.
 
-   `docs/report/report.pdf` is 35 pages across the 15 required sections plus a compliance checklist
+   `docs/report/report.pdf` is 38 pages across the 15 required sections plus a compliance checklist
    and a reproduce-every-number appendix, built by `python3 scripts/build-report.py`. The build
    **inlines** the console transcripts from `docs/screenshots/` rather than quoting them, so the
    report cannot drift from the runs that produced it — which is the structural version of
@@ -268,8 +280,15 @@ every week — a single bulk upload at the end forfeits 10% of the grade.
 
 ## Unverified items — must be cleared before the report
 
-These carry literal `verify:` or `[PLACEHOLDER — …]` markers in the tree; `grep -rn "verify:" src data docs`
-finds them all.
+**`docs/VERIFICATION.md` is the authority.** It carries one entry per marker with the exact source,
+the exact check, and what changes if the answer differs, and
+`SourceRulesTest.everyMarkerHasARouteToClearingIt` fails the build on any marker in `src/main` or
+`data/` that has no entry — so the ledger cannot drift from the tree. The table below is the
+summary; read the ledger before acting on any row.
+
+Every remaining item is blocked on a document this build environment cannot reach: `ntrs.nasa.gov`,
+`weather.uwyo.edu`, `ciaaw.org` and `doi.org` all resolve to nothing here, re-checked on
+2026-09-15. None is blocked on more work in the repository.
 
 | Item | Where | What is needed |
 |---|---|---|
@@ -278,9 +297,25 @@ finds them all.
 | **Lifting-gas molar masses** | `LiftGas.java` | Cite IUPAC standard atomic weights. |
 | **Burst-diameter figures (DS-4)** | `data/missions/balloon.json` | Check against the Totex/Kaymont datasheet. |
 | **EGM96 geoid offset** | `data/missions/mission.json` | Confirm the undulation for the launch region. |
-| **Sphere drag-crisis Re range** | BLUEPRINT §10 | Confirm before quoting "Cd is roughly flat". |
-| **DGCA/AAI rules** | BLUEPRINT §5 | Confirm requirements for unmanned free balloons in India. |
-| **LHS convergence claim** | BLUEPRINT §10 | "~400 members vs ~1,500 for plain MC" must be measured, not repeated. |
-| **Screenshots SC-1…SC-10** | `README.md`, `docs/screenshots/` | Capture after `v0.4-validated`. |
+| **Sphere drag-crisis Re range** | BLUEPRINT §10 | Confirm before quoting "Cd is roughly flat". Nothing depends on it — Cd is estimated from telemetry, so this justifies the model choice rather than feeding it. |
+| **DGCA/AAI rules** | BLUEPRINT §5 | Confirm requirements for unmanned free balloons in India. No regulatory number is quoted anywhere, so this is scope rather than correctness. |
+| **Pre-flight dispersion spreads** | `DispersionSpec.java` | Needs a manufacturer tolerance or a population of real flights. **Cannot** be fitted to DS-6: DS-6's truths are drawn from this very spec, so the earlier proposal to do so was circular and is withdrawn. |
+| **Barometric sigma factor** | `GaussianMeasurementModel.java` | Measured at **1.71** on DS-6 and held at 4.0. DS-6 generates pressure from the same atmosphere model the reader inverts, so 1.71 is a floor containing no model bias. Needs a real dual-sensor log. |
+| **Two paper citations** | report §17 | Liu & West; Gordon, Salmond & Smith. Known but not openable offline, and rule 5 forbids writing a DOI unseen. |
+
+**Cleared since this table was written.** Kept visible so "unverifiable here" stays distinguishable
+from "nobody measured it":
+
+- **LHS convergence claim** — BLUEPRINT §10's "~400 members vs ~1,500 for plain MC" is measured
+  and **retired at about 2.2x rather than 3.75x**. Across seven independent seeds per point, LHS's
+  seed-to-seed scatter in the fitted 95% semi-major axis is lower than plain Monte Carlo's at every
+  count from 100 to 3,200, by about 1.4x; scatter falls as N^-0.53 and N^-0.46 respectively, so a
+  1.4x scatter advantage is about a 2x member advantage. `SamplerConvergenceTest` (`-Pperf`, ~3 min)
+  re-derives it deterministically; ADR-14 carries the table.
+  **Read the ADR before quoting this.** A first attempt ran one seed per point and compared each
+  ensemble with its own 3,200-member value, which is one sample of the spread being measured, and
+  it reported LHS as *worse*. The statistic, not the sampler, was the problem.
+- **Screenshots SC-1…SC-12** — all captured, SC-9 included; the CI history could only be read once
+  the branch had been pushed and the workflow had run fifteen times.
 
 Never write a citation, DOI or URL from memory.

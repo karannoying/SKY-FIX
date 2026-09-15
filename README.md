@@ -114,12 +114,17 @@ to `out/skyfix.0.log`; the console carries warnings and above.
 ```
 
 Measured line coverage, from the JaCoCo report the gate reads: `core.atmos` **100%**,
-`core.flight` **93.6%**, `estimation` **91.7%** (gate: 80% on `core.*` and `estimation`), `domain`
-93.6%, `app` 71.0%, `io` 69.4%, `persistence` 68.7%, `cli` 48.0%. The last four sit outside the
-strict gate by design (BLUEPRINT §11) and are covered by T-U1, T-E1 and T-E3 at the command
-surface.
+`core.flight` **93.1%**, `estimation` **91.7%** (gate: 80% on `core.*` and `estimation`), `domain`
+93.7%, `io` 74.9%, `app` 73.8%, `persistence` 73.2%, `cli` 69.9%; 81.6% overall. The last four sit
+outside the strict gate by design (BLUEPRINT §11) and are covered by T-U1, T-E1 and T-E3 at the
+command surface.
 
-302 tests run in about 5 minutes; the perf-tagged evaluations (T-V5, T-V6, T-V7, T-P*) add roughly
+Take these from a clean `target/`. JaCoCo's agent writes into an existing `jacoco.exec`, so running
+`-Dtest=SomeClass` and then reading the report gives that one class's coverage wearing the whole
+project's name — which is how an earlier capture of this table came to understate `cli` and `io` by
+more than twenty points each.
+
+304 tests run in about 5 minutes; the perf-tagged evaluations (T-V5, T-V6, T-V7, T-P*) add roughly
 another 25 and are excluded by default.
 
 ## Validation results
@@ -208,6 +213,12 @@ own limit by applying itself to `y' = λy` — nothing is transcribed. See `docs
   0.00987%. The header carries a `verify:` marker requiring hand transcription from NOAA-S/T 76-1562
   Table I before the report cites it.
 
+Every unverified number in the project carries a literal `verify:` or `[PLACEHOLDER]` marker, and
+every marker has an entry in **`docs/VERIFICATION.md`** naming the source that clears it, the exact
+check, and what changes if the answer differs. All of them are blocked on documents this build
+environment cannot reach, not on more work in the repository. `SourceRulesTest` fails the build on
+a marker with no ledger entry, so the list cannot quietly go stale.
+
 ## Screenshots and results
 
 `docs/screenshots/` holds the captures BLUEPRINT §16 asks for, all produced by the commands above
@@ -224,15 +235,16 @@ charts are the PNGs the exporters write, at 1460 px or wider.
 | SC-6 | the same seed reproducing the same ellipse | `sc6-reproducibility.txt` |
 | SC-7 | a deliberate config failure, exit code 2, no stack trace | `sc7-config-failure.txt` |
 | SC-8 | JaCoCo coverage summary | `sc8-coverage.txt` |
-| SC-9 | CI history | `[PLACEHOLDER — a capture of the GitHub Actions run list, which only exists once the branch is pushed and the workflow has run.]` |
-| SC-10 | `git log --oneline --graph` | `sc10-git-log.txt` |
+| SC-9 | CI history, fifteen runs including the two that failed | `sc9-ci-history.txt` |
+| SC-10 | `git log --oneline --graph --decorate`, with the milestone tags | `sc10-git-log.txt` |
 | SC-11 | T-V5 recovery over all twenty flights | `sc11-tv5-recovery.txt` |
 | SC-12 | T-V7 ellipse containment | `sc12-tv7-calibration.txt` |
+| SC-13 | Sampler convergence: what LHS is worth (ADR-14) | `sc13-sampler-convergence.txt` |
 | — | PL-4 landing error, PL-5 calibration | `pl4-landing-error.png`, `pl5-ellipse-calibration.png` |
 
 ## Report
 
-`docs/report/report.pdf` — 35 pages, 15 sections plus a compliance checklist and a
+`docs/report/report.pdf` — 38 pages, 15 sections plus a compliance checklist and a
 reproduce-every-number appendix. Rebuild it with:
 
 ```bash
@@ -250,6 +262,8 @@ Chrome or Chromium is found it still writes `report.html`, which prints to PDF f
 - `docs/adr/` — one file per design decision, including the three this implementation added
   (ADR-11 free lift drives inflation, ADR-12 RKF45 is a fixed-step cross-check, ADR-13 the step is
   bounded by descent stability).
+- `docs/VERIFICATION.md` — the ledger of every unverified number: its source, the check that
+  clears it, and what changes if the answer differs. Enforced by `SourceRulesTest`.
 - `HANDOFF.md` — current state and the next steps in order.
 - `docs/schema/V1__init.sql` — the 13-table schema, with physics enforced as CHECK constraints.
 

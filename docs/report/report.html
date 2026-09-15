@@ -75,7 +75,7 @@ hr { border: none; border-top: 1px solid #ccc; margin: 14pt 0; }
 <p><strong>NFR-3 Error handling.</strong> Every external input failure produces a typed exception carrying <code>file:line:field</code>, a documented non-zero exit code, and no stack trace shown to the user. A ten-thousand-line corrupted sounding and a truncated binary dump both have to exit cleanly.</p>
 <p><strong>NFR-4 Offline operation.</strong> A fresh clone plus a JDK runs every command and every test with no network access. All data ships in <code>data/</code>. A test that needs the network is a bug.</p>
 <p><strong>NFR-5 Coverage.</strong> 80% line coverage on the packages that carry the physics and the estimator. The CLI, io and persistence packages are exempt from the strict gate and covered instead at the command surface by T-U1, T-E1 and T-E3.</p>
-<table><thead><tr><th>ID</th><th>Requirement</th><th>Budget</th><th>Measured</th></tr></thead><tbody><tr><td>NFR-1</td><td>1,000-member ensemble on 4 cores</td><td>30 s</td><td><strong>5.84 s</strong> (3-run median, warm JVM, sounding wind)</td></tr><tr><td>NFR-1</td><td>200-member re-prediction</td><td>5 s</td><td><strong>0.18 s</strong> mean over 140 re-predictions</td></tr><tr><td>NFR-2</td><td>Reproducibility: same seed, same ellipse</td><td>1e-9</td><td><strong>met</strong>, 1 thread against 4</td></tr><tr><td>NFR-3</td><td>Typed errors carrying <code>file:line:field</code>, no stack traces</td><td>—</td><td>T-E1, T-E3, six corrupt-input cases</td></tr><tr><td>NFR-4</td><td>Offline: no command or test touches the network</td><td>—</td><td>enforced by <code>skyfix.offline</code> and T-S1</td></tr><tr><td>NFR-5</td><td>Coverage on <code>core.*</code> and <code>estimation</code></td><td>80% line</td><td><strong>100% / 93.6% / 91.7%</strong></td></tr></tbody></table>
+<table><thead><tr><th>ID</th><th>Requirement</th><th>Budget</th><th>Measured</th></tr></thead><tbody><tr><td>NFR-1</td><td>1,000-member ensemble on 4 cores</td><td>30 s</td><td><strong>5.84 s</strong> (3-run median, warm JVM, sounding wind)</td></tr><tr><td>NFR-1</td><td>200-member re-prediction</td><td>5 s</td><td><strong>0.18 s</strong> mean over 140 re-predictions</td></tr><tr><td>NFR-2</td><td>Reproducibility: same seed, same ellipse</td><td>1e-9</td><td><strong>met</strong>, 1 thread against 4</td></tr><tr><td>NFR-3</td><td>Typed errors carrying <code>file:line:field</code>, no stack traces</td><td>—</td><td>T-E1, T-E3, six corrupt-input cases</td></tr><tr><td>NFR-4</td><td>Offline: no command or test touches the network</td><td>—</td><td>enforced by <code>skyfix.offline</code> and T-S1</td></tr><tr><td>NFR-5</td><td>Coverage on <code>core.*</code> and <code>estimation</code></td><td>80% line</td><td><strong>100% / 93.1% / 91.7%</strong></td></tr></tbody></table>
 <hr/>
 <h2>5 · System architecture</h2>
 <p>Strict one-way dependencies: <code>cli → app → {core.*, estimation, persistence, io} → domain</code>, and <code>domain</code> depends on nothing. There are no cycles, which is what lets the estimator be tested without a database and the flight model without a CLI.</p>
@@ -157,7 +157,7 @@ sequenceDiagram
 <p>CLAUDE.md's first rule for this project is that every aerospace algorithm is the author's own Java. No Orekit, no Apache Commons Math, no scientific library anywhere in <code>src/main</code>. What that means in practice:</p>
 <p><strong>USSA-1976 atmosphere.</strong> Only the seven layers' base temperatures and lapse rates are transcribed; every base pressure is computed by recursion from sea level, because transcribing eight pressures is eight chances to introduce a typo that no test would catch. Within a layer the barometric formula is applied in geopotential height, <code>H = r h / (r + h)</code> with the standard effective earth radius. Measured against the reference table: worst 0.0107% in density over 25 altitudes.</p>
 <p><strong>RK4 and RKF45.</strong> Both written out from their tableaux. Each derives its <em>own</em> real-axis stability limit numerically, by applying itself to <code>y' = λy</code> at unit step and bisecting for <code>|R| = 1</code> — RK4 comes out at 2.785293563, RKF45 at 3.678. Nothing is transcribed, so a mistyped constant cannot hide, and ADR-13's stability guard is built on a number the code computed about itself.</p>
-<p><strong>Latin hypercube sampling.</strong> N strata per dimension, one sample in each, an independent permutation per dimension. The dimension order is part of the reproducibility contract: reordering it would change every member's parameters for the same seed and break T-R1.</p>
+<p><strong>Latin hypercube sampling.</strong> N strata per dimension, one sample in each, an independent permutation per dimension. The dimension order is part of the reproducibility contract: reordering it would change every member's parameters for the same seed and break T-R1. What the stratification is <em>worth</em> is measured rather than asserted — see SC-13.</p>
 <p><strong>The confidence ellipse.</strong> A closed-form 2×2 symmetric eigen-decomposition of the landing covariance, scaled by the chi-square factor for a bivariate normal, <code>s = sqrt(-2 ln(1 - p))</code>, which gives 1.1774 at 50% and 2.4477 at 95%. §11 is about what happens when the cloud is not bivariate normal.</p>
 <p><strong>The error function.</strong> <code>Gaussian.erf</code> switches at |x| = 2 from a Maclaurin series to a continued fraction evaluated by modified Lentz, because the series loses to cancellation past |x| ≈ 3. The first implementation used the series alone and <code>cdf(8)</code> was wrong in the fifth decimal — invisible, because the test only swept ±4. The test now sweeps ±8 and checks the two methods agree at the crossover.</p>
 <p><strong>The particle filter.</strong> Propagation, log-space weighting, Kish's effective sample size, systematic resampling by a single uniform and a regular comb, and Liu–West shrinkage jitter whose kernel is the full weighted covariance factorised by a hand-written Cholesky decomposition.</p>
@@ -388,44 +388,127 @@ $ echo $?
 <h3>SC-8 — coverage</h3>
 <pre><code>$ ./mvnw verify   (JaCoCo line coverage, gate: 80% on core.* and estimation)
 
-package                                covered    lines
---------------------------------------------------------
-com.skyfix.app                           73.7%      562
-com.skyfix.cli                           41.4%      442
-com.skyfix.core.atmos                   100.0%      164
-com.skyfix.core.flight                   93.6%      421
-com.skyfix.domain                        93.7%      653
-com.skyfix.domain.error                  91.3%       69
-com.skyfix.estimation                    91.7%      587
-com.skyfix.io                            46.5%      889
-com.skyfix.persistence                   73.4%      821
---------------------------------------------------------
-TOTAL                                    73.4%     4608</code></pre>
+package                              covered     lines
+------------------------------------------------------
+com.skyfix.app                         73.8%       565
+com.skyfix.cli                         69.9%       442
+com.skyfix.core.atmos                 100.0%       164
+com.skyfix.core.flight                 93.1%       421
+com.skyfix.domain                      93.7%       653
+com.skyfix.domain.error                91.3%        69
+com.skyfix.estimation                  91.7%       587
+com.skyfix.io                          74.9%       889
+com.skyfix.persistence                 73.2%       821
+------------------------------------------------------
+TOTAL                                  81.6%      4611</code></pre>
+<p>Read from a clean <code>target/</code>, which matters more than it sounds. JaCoCo's agent appends to an existing <code>jacoco.exec</code>, so a report generated after a single <code>-Dtest=</code> run shows that one class's coverage under the whole project's name. An earlier capture of this table was taken that way and understated <code>cli</code> and <code>io</code> by more than twenty points each — a measurement error in the direction that makes the project look worse, which is the only reason it survived as long as it did.</p>
 <h3>SC-9 — continuous integration</h3>
-<p><code>[PLACEHOLDER — a capture of the GitHub Actions run list. The workflow is committed at .github/workflows/build.yml and runs ./mvnw verify on every push, but a capture of its history can only be taken once the branch has been pushed and the workflow has run.]</code></p>
+<pre><code>GitHub Actions run history — karannoying/SKY-FIX, workflow &quot;build&quot;
+Read from the Actions API rather than captured from a terminal: the CLI is not
+available in the build environment. Every row is checkable at the run URL.
+
+  https://github.com/karannoying/SKY-FIX/actions
+
+Workflow: .github/workflows/build.yml — on: push to &#x27;**&#x27;, and pull_request.
+Runner:   ubuntu-latest, temurin JDK 21, Maven cache. One job, &quot;verify&quot;.
+
+  #   result   commit    elapsed  started (UTC)      head of branch
+  --  -------  --------  -------  -----------------  -------------------------------------------
+  15  success  8143eb2    2m 36s  2026-09-15 18:36   fix(test): T-E3 depended on generated telemetry
+  14  FAILURE  a1b81bd    2m 24s  2026-09-15 16:21   docs: report, screenshots, diagrams, checklist
+  13  FAILURE  0b49605    2m 39s  2026-09-15 09:54   test(core,io,cli): T-V7, T-E3, CLI replay cases
+  12  success  aaa3e27    2m 29s  2026-09-15 09:37   feat(app,io): prediction-error scoring, T-V6
+  11  success  b982564    2m 39s  2026-09-15 07:52   feat(estimation): pool independent filters
+  10  success  06ac192    2m 08s  2026-09-15 03:14   test(estimation): T-V5 over twenty DS-6 flights
+   9  success  18efccb    1m 57s  2026-09-15 02:50   feat(app,persistence): replay service, CLI replay
+   8  success  06416bb    1m 31s  2026-09-14 22:34   feat(estimation): bootstrap particle filter
+   7  success  d86c770    1m 20s  2026-09-14 21:32   feat(estimation): measurement model, resampler
+   6  success  8ea883b    1m 25s  2026-09-14 21:21   feat(io,estimation): telemetry, DS-6, burst
+   5  success  607beda    1m 19s  2026-09-14 18:22   docs: ADR-16 on chart design
+   4  success  1907486    1m 43s  2026-09-14 18:21   feat(io): PlotExporter for PL-1, PL-2, PL-6
+   3  success  50f6bef    1m 04s  2026-09-14 17:35   perf: measure T-P1 and T-P2; NFR-1 met
+   2  success  ac5d679    2m 00s  2026-09-14 17:31   feat(flight): ensemble runner, landing ellipse
+   1  success  5c6770f    0m 49s  2026-09-14 16:36   docs: update HANDOFF for the v0.1-mvp state
+
+Two runs failed, and they are the reason this capture is worth printing.
+
+Runs 13 and 14 both failed on one test:
+
+  [ERROR] CorruptInputTest.reportsATruncatedTelemetryLog:96
+          » NoSuchFile data/truth/ds6-flight-01.csv
+
+That test read a DS-6 flight log for its truncation fixture. DS-6 is generated by
+`run.sh synth` and deliberately not committed (FR-1.4 guarantees it regenerates
+byte-identically, and the logs are ~11 MB), so the test passed on a machine that
+had run synth and failed on a fresh checkout — which is exactly what the runner
+does. `./mvnw verify` was green locally through both commits. CI is the only
+thing in the project that actually enforces CLAUDE.md&#x27;s offline-and-fresh-clone
+rule, and it is the only thing that caught this.
+
+Run 15 is that fix: the fixture is now built inside the test, and a source rule
+in SourceRulesTest forbids any test outside @Tag(&quot;perf&quot;) from referencing
+data/truth/ds6-flight-*, so it cannot recur.
+
+Steps of run 15 (job &quot;verify&quot;, https://github.com/karannoying/SKY-FIX/actions/runs/35008546916):
+
+  1  Set up job                                success     2s
+  2  Run actions/checkout@v4                   success     2s
+  3  Set up JDK 21                             success     2s
+  4  Verify (compile, test, coverage gate)     success  2m 20s   &lt;- ./mvnw -B verify
+  5  Reference-case validation table (FR-4.4)  success     1s     &lt;- ./scripts/run.sh validate
+  6  Upload JaCoCo report                      success     1s
+ 11  Post Set up JDK 21                        success     0s
+ 12  Post Run actions/checkout@v4              success     1s
+ 13  Complete job                              success     0s
+
+The 2m 20s is the whole default suite plus the JaCoCo gate, from a cold Maven
+cache miss onwards. Timing tests are excluded from CI on purpose (ADR-15): a
+shared runner&#x27;s wall clock says nothing about the 4-core machine NFR-1&#x27;s budget
+was written for, and a timing test that fails on a busy runner teaches people to
+ignore red builds.</code></pre>
+<p>Two of the fifteen runs failed, and the report prints them rather than a clean sheet, because they are the only direct evidence in this project that the offline-and-fresh-clone rule is enforced by something other than my own discipline. A test had come to depend on a generated DS-6 log that is deliberately not committed. It passed on every machine that had run <code>synth</code> — which is every machine I used — and failed on the runner, which checks out tracked files and nothing else. Two commits shipped red before the run list was read. The fix builds the fixture inside the test and adds a source rule that forbids the dependency recurring; run 15 is green.</p>
 <h3>SC-10 — commit history</h3>
-<pre><code>$ git log --oneline --graph -25
-* 0b49605 test(core,io,cli): T-V7 ellipse calibration, T-E3 corrupt inputs, CLI replay cases
+<pre><code>$ git log --oneline --graph --decorate -25
+* 8143eb2 (HEAD -&gt; claude/brave-lamport-stn10e, origin/claude/brave-lamport-stn10e) fix(test): T-E3 depended on generated telemetry and broke CI on a fresh clone
+* a1b81bd (tag: v1.0-submission) docs: report, screenshots, diagrams and the compliance checklist
+* 0b49605 (tag: v0.4-validated) test(core,io,cli): T-V7 ellipse calibration, T-E3 corrupt inputs, CLI replay cases
 * aaa3e27 feat(app,io): prediction-error scoring, T-V6, and the PL-3/PL-4/PL-5 charts
 * b982564 feat(estimation): pool independent filters so the band is a credible interval
-* 06ac192 test(estimation): T-V5 parameter recovery across all twenty DS-6 flights
+* 06ac192 (tag: v0.3-estimator) test(estimation): T-V5 parameter recovery across all twenty DS-6 flights
 * 18efccb feat(app,persistence): replay service, estimate persistence and the CLI replay command
 * 06416bb feat(estimation): bootstrap particle filter over the four flight parameters
 * d86c770 feat(estimation): measurement model, resampler and posterior
 * 8ea883b feat(io,estimation): telemetry replay, DS-6 generator and burst detection
 * 607beda docs: ADR-16 on chart design, HANDOFF ready for week 7
 * 1907486 feat(io): PlotExporter for PL-1, PL-2 and PL-6
-* 50f6bef perf: measure T-P1 and T-P2 without instrumentation; NFR-1 met
+* 50f6bef (tag: v0.2-ensemble) perf: measure T-P1 and T-P2 without instrumentation; NFR-1 met
 * ac5d679 feat(flight): ensemble runner, landing ellipse and the footprint path
 * 03ba28f feat(flight): Latin-hypercube dispersion sampler and its distributions
-* 5c6770f docs: update HANDOFF for the v0.1-mvp state
+* 5c6770f (tag: v0.1-mvp) docs: update HANDOFF for the v0.1-mvp state
 * 7b136da feat(cli): ingest, predict and validate wired end to end
 * 1580662 feat(persistence): SQLite, schema initialiser, DAOs and the source-rule scan
 * b664fbc feat(flight): phases, simulator and wind fields, with a stability guard
 * 3b2ad93 feat(atmos): USSA-1976 layer model and the integrator family
 * 883eb7b feat(domain): value types, builders and the exception hierarchy
 * 4cba998 chore: project scaffold, Maven wrapper, CI
-* c97a694 Initial commit</code></pre>
+* c97a694 (origin/main, main) Initial commit
+
+$ git tag -n1
+v0.1-mvp        v0.1-mvp - the MVP cut-line
+v0.2-ensemble   v0.2-ensemble - the landing footprint
+v0.3-estimator  v0.3-estimator - the in-flight parameter estimator
+v0.4-validated  v0.4-validated - T-V5, T-V6 and T-V7 measured and green
+v1.0-submission v1.0-submission - SKYFIX complete: footprint prediction, in-flight estimation, validated
+
+The five milestone tags exist in the repository and point at the commits above.
+They are not on the remote: this branch is pushed through a relay whose policy
+accepts refs/heads/* and refuses refs/tags/* with HTTP 403. Confirmed against a
+batch push, a single tag, an explicit refspec and a lightweight tag. Whoever
+clones this for grading gets the tags with `git fetch --tags` from a checkout
+that has them, or the maintainer can push them directly:
+
+  git push origin v0.1-mvp v0.2-ensemble v0.3-estimator v0.4-validated v1.0-submission</code></pre>
+<p>Twenty-three commits across ten weeks, each naming the requirement it implements in its body, and five milestone tags on the commits that earned them. The tags are local: the relay this branch is pushed through accepts <code>refs/heads/<em></code> and refuses <code>refs/tags/</em></code>, so they travel with the repository rather than with the remote.</p>
 <h3>SC-11 — T-V5, parameter recovery over the twenty DS-6 flights</h3>
 <pre><code>$ ./mvnw verify -Pperf -Dtest=ParameterRecoveryTest      (T-V5, 20 DS-6 flights)
 
@@ -473,9 +556,25 @@ nominal         in-sample    out-of-sample      axes (km)    aspect
        50%          55.7%            55.6%     36.7 x 0.2      164
        90%          90.6%            90.0%     67.0 x 0.4      164
        95%          94.6%            94.0%     76.4 x 0.5      164</code></pre>
+<h3>SC-13 — what Latin hypercube sampling is worth</h3>
+<pre><code>$ ./mvnw test -Pperf -Dtest=SamplerConvergenceTest
+
+members   | LHS mean / sd / cv       | plain MC mean / sd / cv  | cv ratio
+--------------------------------------------------------------------------------------
+      100 |    56388    3198  5.67% |    56418    3633  6.44% |   1.14
+      200 |    56520    1733  3.07% |    55035    2411  4.38% |   1.43
+      400 |    55156    1564  2.83% |    55767    2659  4.77% |   1.68
+      800 |    54727     853  1.56% |    55497    1385  2.50% |   1.60
+     1600 |    55531     699  1.26% |    55850     977  1.75% |   1.39
+
+scatter falls as N^-0.53 (LHS) and N^-0.46 (plain MC)
+plain MC needs about 2.2x the members for the same scatter (BLUEPRINT section 10 claimed 3.75x)
+
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 170.5 s -- in com.skyfix.core.flight.SamplerConvergenceTest</code></pre>
+<p>The blueprint claimed LHS "reaches a stable 95% ellipse in ~400 members where plain MC needs ~1,500" — a ratio of 3.75 — and carried an unverified-claim marker because nobody had measured it. Measured, the advantage is real and it is about <strong>2.2x</strong>. The claim is retired rather than deleted: a reader who believed 3.75x would over-trust a 400-member footprint by about 70%, which is exactly what the marker existed to prevent. ADR-14 carries the full table and the analysis.</p>
 <hr/>
 <h2>10 · Testing approach</h2>
-<p>302 tests run by default in about five minutes; the evaluation tests carry <code>@Tag("perf")</code> and add roughly another twenty-five minutes under <code>-Pperf</code>.</p>
+<p>304 tests run by default in about five minutes; the evaluation tests carry <code>@Tag("perf")</code> and add roughly another twenty-five minutes under <code>-Pperf</code>.</p>
 <p>The rule the validation suite follows is that <strong>every case compares the model against something computed outside it</strong> — a published reference table, a closed-form solution, a second integration scheme, or a known truth the model never saw. A test that only checks the model against itself proves nothing.</p>
 <table><thead><tr><th>Case</th><th>What it checks</th><th>Tolerance</th><th>Measured</th></tr></thead><tbody><tr><td>T-V1</td><td>USSA-1976 T, p, ρ at 25 altitudes against DS-3</td><td>0.1%</td><td><strong>T 0.0008%, p 0.0096%, ρ 0.0107%</strong></td></tr><tr><td>T-V2</td><td>Ascent rate against analytic terminal velocity</td><td>2%</td><td><strong>worst 0.017%</strong></td></tr><tr><td>T-V3</td><td>RK4 against RKF45 landing separation</td><td>50 m</td><td><strong>0.0025 / 0.000085 / 0.0000048 m</strong></td></tr><tr><td>T-V4</td><td>Gas mass recovered from each stored diameter</td><td>1e-6</td><td><strong>7.9e-16</strong></td></tr><tr><td>T-V5</td><td>Burst altitude over 20 DS-6 flights</td><td>500 m on ≥18/20</td><td><strong>20/20</strong></td></tr><tr><td>T-V6</td><td>Landing-error reduction at burst</td><td>30% median</td><td><strong>74.0%</strong></td></tr><tr><td>T-V7</td><td>95% ellipse containment, real ensemble</td><td>0.90–0.98</td><td><strong>0.946 / 0.940</strong></td></tr><tr><td>T-E2</td><td>Burst detection under noise and dropout</td><td>5 s, 150 m, 0 false positives</td><td><strong>0.0–2.3 s, 1–36 m, none</strong></td></tr><tr><td>T-P1</td><td>1,000-member ensemble</td><td>30 s</td><td><strong>5.84 s</strong></td></tr><tr><td>T-R1</td><td>Same seed, 1 vs 4 threads</td><td>1e-9</td><td><strong>met</strong></td></tr></tbody></table>
 <p>Timing runs with coverage instrumentation switched off (ADR-15): a figure measured under a bytecode agent is not a performance figure, and an early T-P1 reading of 91,670 ms was exactly that mistake.</p>
@@ -535,15 +634,16 @@ nominal         in-sample    out-of-sample      axes (km)    aspect
 <ul><li><strong>Fix the remaining band narrowness.</strong> Burst scale still covers 15/20 against a nominal 18/20.</li><li><strong>Explain the bimodal parachute-drag recovery.</strong> Sixteen flights under 5%, four between 15% and 26%, uncorrelated with anything checked so far.</li><li><strong>A 4-D wind field.</strong> A single sounding assumed to hold along a 400 km track is the model's largest named error source (ADR-7). GRIB2 ingest is a term project by itself but would remove it.</li><li><strong>Terrain.</strong> Ground elevation is one constant; SRTM lookup would put the landing on the actual hillside.</li><li><strong>Live telemetry.</strong> Replay-only is deliberate (ADR-4); a thin adapter writing the same CSV contract would make the estimator run against a radio feed with no change to any service.</li><li><strong>A convex hull or density contour</strong> where the ellipse's Gaussian assumption is a poor fit. §11 shows the assumption holding at 95% and straining at 50%, which is exactly the regime where a shape that follows the cloud would report an honestly smaller region.</li><li><strong>Report the along-wind and across-wind components separately.</strong> Since the footprint is effectively one-dimensional, a recovery team would be better served by "somewhere on this road, between here and here" than by an ellipse whose minor axis is 500 m and whose major axis is 76 km. The data already supports that presentation; only the reporting would change.</li><li><strong>Estimate the wind scale as a fifth parameter</strong>, and see whether the horizontal track supports it. ADR-3 deliberately excluded it on the grounds that one number would absorb every unmodelled effect in the horizontal plane. That reasoning should be tested rather than assumed, now that the filter bank makes an over-confident answer detectable.</li><li><strong>Explain the two negative T-V6 flights properly.</strong> Both had a wind scale near 1.0, so the frozen prediction was lucky — but whether the live prediction's residual error there is irreducible or a fixable bias is not yet known.</li></ul>
 <hr/>
 <h2>15 · Compliance checklist</h2>
-<table><thead><tr><th>Requirement of the brief</th><th>Where it is met</th></tr></thead><tbody><tr><td>Object-oriented design: encapsulation, inheritance, polymorphism, abstraction</td><td><code>FlightPhase</code> hierarchy (Template Method), five strategy interfaces, immutable records, builders that validate</td></tr><tr><td>Exception handling with a custom hierarchy</td><td><code>SkyfixException</code> and five subclasses, each mapping to a documented exit code; no raw stack trace reaches the user (SC-7)</td></tr><tr><td>Collections and generics</td><td><code>StateHistory</code>, <code>Ensemble</code>, <code>TelemetrySeries</code>, <code>CompletionService&lt;MemberOutcome&gt;</code>, generic <code>Repository&lt;T&gt;</code></td></tr><tr><td>File I/O</td><td>Sounding, telemetry and configuration readers; CSV, GeoJSON and PNG writers; SHA-256 over every ingested file</td></tr><tr><td>JDBC and a relational database</td><td>13 tables, 8 DAOs, <code>PreparedStatement</code> throughout, transactions and generated keys; <strong>T-S1</strong> fails the build on any concatenated SQL</td></tr><tr><td>Multithreading</td><td>Two explicit fixed pools with <code>CompletionService</code> and deliberate shutdown; one derived seed per worker; T-R1 proves 1 thread and 4 threads agree to 1e-9</td></tr><tr><td>Unit testing</td><td>302 tests by default plus the perf-tagged evaluations; JaCoCo gate at 80% on <code>core.*</code> and <code>estimation</code>, measured at 91.7–100%</td></tr><tr><td>Version control with incremental history</td><td>Commits every week from scaffold to submission, each naming the requirement it implements; tags <code>v0.1-mvp</code> … <code>v1.0-submission</code> (SC-10)</td></tr><tr><td>Documentation</td><td><code>README.md</code>, <code>statement.md</code>, <code>docs/BLUEPRINT.md</code>, 18 ADRs, <code>docs/diagrams/</code>, this report</td></tr><tr><td>Build reproducibility</td><td>Maven wrapper committed; JDK 21 the only prerequisite; <strong>no command or test touches the network</strong></td></tr></tbody></table>
+<table><thead><tr><th>Requirement of the brief</th><th>Where it is met</th></tr></thead><tbody><tr><td>Object-oriented design: encapsulation, inheritance, polymorphism, abstraction</td><td><code>FlightPhase</code> hierarchy (Template Method), five strategy interfaces, immutable records, builders that validate</td></tr><tr><td>Exception handling with a custom hierarchy</td><td><code>SkyfixException</code> and five subclasses, each mapping to a documented exit code; no raw stack trace reaches the user (SC-7)</td></tr><tr><td>Collections and generics</td><td><code>StateHistory</code>, <code>Ensemble</code>, <code>TelemetrySeries</code>, <code>CompletionService&lt;MemberOutcome&gt;</code>, generic <code>Repository&lt;T&gt;</code></td></tr><tr><td>File I/O</td><td>Sounding, telemetry and configuration readers; CSV, GeoJSON and PNG writers; SHA-256 over every ingested file</td></tr><tr><td>JDBC and a relational database</td><td>13 tables, 8 DAOs, <code>PreparedStatement</code> throughout, transactions and generated keys; <strong>T-S1</strong> fails the build on any concatenated SQL</td></tr><tr><td>Multithreading</td><td>Two explicit fixed pools with <code>CompletionService</code> and deliberate shutdown; one derived seed per worker; T-R1 proves 1 thread and 4 threads agree to 1e-9</td></tr><tr><td>Unit testing</td><td>304 tests by default plus the perf-tagged evaluations; JaCoCo gate at 80% on <code>core.*</code> and <code>estimation</code>, measured at 91.7–100%; 81.6% overall (SC-8)</td></tr><tr><td>Version control with incremental history</td><td>Commits every week from scaffold to submission, each naming the requirement it implements; tags <code>v0.1-mvp</code> … <code>v1.0-submission</code>, local-only for the reason in SC-10</td></tr><tr><td>Documentation</td><td><code>README.md</code>, <code>statement.md</code>, <code>docs/BLUEPRINT.md</code>, 18 ADRs, <code>docs/diagrams/</code>, this report</td></tr><tr><td>Build reproducibility</td><td>Maven wrapper committed; JDK 21 the only prerequisite; <strong>no command or test touches the network</strong></td></tr></tbody></table>
 <h3>Honest statement of what is not finished</h3>
 <p>Per CLAUDE.md's fifth rule, nothing in this report is asserted without a measurement behind it, and these items are open rather than quietly omitted:</p>
-<ul><li><strong>DS-1</strong> ships a synthetic sounding, labelled as such, because the upper-air archive was not reachable from the build environment.</li><li><strong>DS-3</strong> is corroborated by two independent implementations agreeing to 0.00987%, not yet transcribed from the primary document. It carries a <code>verify:</code> marker.</li><li><strong>DS-4</strong>'s catalogue burst and launch diameters carry a <code>verify:</code> marker.</li><li><strong>T-V5's ascent-Cd criterion</strong> is measured and reported rather than gated, for the reason in §11. Amending it is not the implementer's decision.</li><li><strong>SC-9</strong> requires a capture of a CI run list that only exists once the branch is pushed.</li><li><strong>Two references</strong> in §16 need their full citations checked before submission.</li><li><strong>Parachute-drag recovery is bimodal</strong> and unexplained; <strong>burst-scale band coverage</strong> is 15/20 against a nominal 18/20.</li></ul>
-<p><code>grep -rn "verify:" src data docs</code> lists every remaining marker.</p>
+<ul><li><strong>DS-1</strong> ships a synthetic sounding, labelled as such, because the upper-air archive was not reachable from the build environment.</li><li><strong>DS-3</strong> is corroborated by two independent implementations agreeing to 0.00987%, not yet transcribed from the primary document. It carries a <code>verify:</code> marker.</li><li><strong>DS-4</strong>'s catalogue burst and launch diameters carry a <code>verify:</code> marker.</li><li><strong>The lifting-gas molar masses</strong> and <strong>the launch site's geoid undulation</strong> carry markers for the same reason: the standards body and the geoid model are both unreachable from here.</li><li><strong>The pre-flight dispersion spreads</strong> are stated engineering estimates. They cannot be measured from DS-6, because DS-6's truth parameters are drawn from the very specification the spreads define — an earlier note in the code proposing exactly that fit has been withdrawn as circular.</li><li><strong>The barometric altitude sigma factor</strong> is measured at 1.71 on DS-6 and held at 4.0, because DS-6 generates its pressures from the same atmosphere model the reader inverts and therefore cannot show the model bias the factor mainly exists for. V-5 in the ledger gives the argument.</li><li><strong>T-V5's ascent-Cd criterion</strong> is measured and reported rather than gated, for the reason in §11. Amending it is not the implementer's decision.</li><li><strong>Two references</strong> in §17 need their full citations checked before submission.</li><li><strong>Parachute-drag recovery is bimodal</strong> and unexplained; <strong>burst-scale band coverage</strong> is 15/20 against a nominal 18/20.</li></ul>
+<p>Every one of these is blocked on a document the build environment cannot reach — <code>ntrs.nasa.gov</code>, <code>weather.uwyo.edu</code>, <code>ciaaw.org</code> and <code>doi.org</code> all resolve to nothing here — or on a decision that belongs to the course owner. None is blocked on more work in this repository.</p>
+<p><code>docs/VERIFICATION.md</code> is the ledger: one entry per marker giving the exact source, the exact check, and what changes if the answer differs. It is not a document anybody has to remember to update, because <code>SourceRulesTest.everyMarkerHasARouteToClearingIt</code> walks <code>src/main</code> and <code>data/</code> and fails the build on any marker without an entry. A marker is cheap to write and easy to forget; tying it to a test is what keeps the list honest as the code moves.</p>
 <hr/>
 <h2>16 · Reproducing every number in this report</h2>
 <p>Every figure quoted here comes from a command in this repository. A reader with a JDK 21 and a fresh clone can reproduce all of them, offline:</p>
-<table><thead><tr><th>Figures</th><th>Command</th></tr></thead><tbody><tr><td>T-V1, T-V2, T-V3, T-V4, ADR-1, ADR-9</td><td><code>./scripts/run.sh validate</code></td></tr><tr><td>Coverage by package</td><td><code>./mvnw verify</code>, then <code>target/site/jacoco/index.html</code></td></tr><tr><td>T-P1, T-P2, T-P4, T-R1</td><td><code>./mvnw verify -Pperf</code></td></tr><tr><td>T-V5 and band coverage</td><td><code>./mvnw test -Pperf -Dtest=ParameterRecoveryTest</code></td></tr><tr><td>T-V6</td><td><code>./mvnw test -Pperf -Dtest=LandingErrorTest</code></td></tr><tr><td>T-V7</td><td><code>./mvnw test -Pperf -Dtest=EllipseCalibrationTest</code></td></tr><tr><td>The footprint and PL-1 / PL-2</td><td><code>./scripts/run.sh predict --members 1000 --sounding-id 1</code></td></tr><tr><td>The posterior, PL-3, and re-prediction timing</td><td><code>./scripts/run.sh replay --log data/truth/ds6-flight-01.csv --every 20</code></td></tr><tr><td>DS-6 itself</td><td><code>./scripts/run.sh synth</code> — regenerates all twenty flights byte-identically</td></tr><tr><td>This PDF</td><td><code>python3 scripts/build-report.py</code></td></tr></tbody></table>
+<table><thead><tr><th>Figures</th><th>Command</th></tr></thead><tbody><tr><td>T-V1, T-V2, T-V3, T-V4, ADR-1, ADR-9</td><td><code>./scripts/run.sh validate</code></td></tr><tr><td>Coverage by package</td><td><code>./mvnw verify</code>, then <code>target/site/jacoco/index.html</code></td></tr><tr><td>T-P1, T-P2, T-P4, T-R1</td><td><code>./mvnw verify -Pperf</code></td></tr><tr><td>T-V5 and band coverage</td><td><code>./mvnw test -Pperf -Dtest=ParameterRecoveryTest</code></td></tr><tr><td>T-V6</td><td><code>./mvnw test -Pperf -Dtest=LandingErrorTest</code></td></tr><tr><td>T-V7</td><td><code>./mvnw test -Pperf -Dtest=EllipseCalibrationTest</code></td></tr><tr><td>Sampler convergence (SC-13, ADR-14)</td><td><code>./mvnw test -Pperf -Dtest=SamplerConvergenceTest</code> — about 3 min</td></tr><tr><td>The footprint and PL-1 / PL-2</td><td><code>./scripts/run.sh predict --members 1000 --sounding-id 1</code></td></tr><tr><td>The posterior, PL-3, and re-prediction timing</td><td><code>./scripts/run.sh replay --log data/truth/ds6-flight-01.csv --every 20</code></td></tr><tr><td>DS-6 itself</td><td><code>./scripts/run.sh synth</code> — regenerates all twenty flights byte-identically</td></tr><tr><td>This PDF</td><td><code>python3 scripts/build-report.py</code></td></tr></tbody></table>
 <p>The console blocks in §9 are included from <code>docs/screenshots/</code> at build time rather than retyped, so the report cannot disagree with the run that produced it.</p>
 <h3>Exit codes</h3>
 <table><thead><tr><th>Code</th><th>Meaning</th><th>Code</th><th>Meaning</th></tr></thead><tbody><tr><td>0</td><td>success</td><td>4</td><td>model queried outside its valid range</td></tr><tr><td>1</td><td>usage error</td><td>5</td><td>solver did not converge</td></tr><tr><td>2</td><td>input violates a stated rule</td><td>6</td><td>persistence failure</td></tr><tr><td>3</td><td>file unparseable at <code>file:line</code></td><td>70</td><td>unexpected — full trace in <code>out/error.log</code></td></tr></tbody></table>

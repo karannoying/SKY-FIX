@@ -233,7 +233,7 @@ command surface by T-U1, T-E1 and T-E3.
 | NFR-2 | Reproducibility: same seed, same ellipse | 1e-9 | **met**, 1 thread against 4 |
 | NFR-3 | Typed errors carrying `file:line:field`, no stack traces | — | T-E1, T-E3, six corrupt-input cases |
 | NFR-4 | Offline: no command or test touches the network | — | enforced by `skyfix.offline` and T-S1 |
-| NFR-5 | Coverage on `core.*` and `estimation` | 80% line | **100% / 93.6% / 91.7%** |
+| NFR-5 | Coverage on `core.*` and `estimation` | 80% line | **100% / 93.1% / 91.7%** |
 
 ---
 
@@ -408,7 +408,8 @@ hide, and ADR-13's stability guard is built on a number the code computed about 
 
 **Latin hypercube sampling.** N strata per dimension, one sample in each, an independent permutation
 per dimension. The dimension order is part of the reproducibility contract: reordering it would
-change every member's parameters for the same seed and break T-R1.
+change every member's parameters for the same seed and break T-R1. What the stratification is
+*worth* is measured rather than asserted — see SC-13.
 
 **The confidence ellipse.** A closed-form 2×2 symmetric eigen-decomposition of the landing
 covariance, scaled by the chi-square factor for a bivariate normal, `s = sqrt(-2 ln(1 - p))`, which
@@ -508,15 +509,32 @@ NFR-3's requirement in one screen.
 
 {{include:docs/screenshots/sc8-coverage.txt}}
 
+Read from a clean `target/`, which matters more than it sounds. JaCoCo's agent appends to an
+existing `jacoco.exec`, so a report generated after a single `-Dtest=` run shows that one class's
+coverage under the whole project's name. An earlier capture of this table was taken that way and
+understated `cli` and `io` by more than twenty points each — a measurement error in the direction
+that makes the project look worse, which is the only reason it survived as long as it did.
+
 ### SC-9 — continuous integration
 
-`[PLACEHOLDER — a capture of the GitHub Actions run list. The workflow is committed at
-.github/workflows/build.yml and runs ./mvnw verify on every push, but a capture of its history can
-only be taken once the branch has been pushed and the workflow has run.]`
+{{include:docs/screenshots/sc9-ci-history.txt}}
+
+Two of the fifteen runs failed, and the report prints them rather than a clean sheet, because they
+are the only direct evidence in this project that the offline-and-fresh-clone rule is enforced by
+something other than my own discipline. A test had come to depend on a generated DS-6 log that is
+deliberately not committed. It passed on every machine that had run `synth` — which is every
+machine I used — and failed on the runner, which checks out tracked files and nothing else. Two
+commits shipped red before the run list was read. The fix builds the fixture inside the test and
+adds a source rule that forbids the dependency recurring; run 15 is green.
 
 ### SC-10 — commit history
 
 {{include:docs/screenshots/sc10-git-log.txt}}
+
+Twenty-three commits across ten weeks, each naming the requirement it implements in its body, and
+five milestone tags on the commits that earned them. The tags are local: the relay this branch is
+pushed through accepts `refs/heads/*` and refuses `refs/tags/*`, so they travel with the repository
+rather than with the remote.
 
 ### SC-11 — T-V5, parameter recovery over the twenty DS-6 flights
 
@@ -526,11 +544,21 @@ only be taken once the branch has been pushed and the workflow has run.]`
 
 {{include:docs/screenshots/sc12-tv7-calibration.txt}}
 
+### SC-13 — what Latin hypercube sampling is worth
+
+{{include:docs/screenshots/sc13-sampler-convergence.txt}}
+
+The blueprint claimed LHS "reaches a stable 95% ellipse in ~400 members where plain MC needs
+~1,500" — a ratio of 3.75 — and carried an unverified-claim marker because nobody had measured it.
+Measured, the advantage is real and it is about **2.2x**. The claim is retired rather than deleted:
+a reader who believed 3.75x would over-trust a 400-member footprint by about 70%, which is exactly
+what the marker existed to prevent. ADR-14 carries the full table and the analysis.
+
 ---
 
 ## 10 · Testing approach
 
-302 tests run by default in about five minutes; the evaluation tests carry `@Tag("perf")` and add
+304 tests run by default in about five minutes; the evaluation tests carry `@Tag("perf")` and add
 roughly another twenty-five minutes under `-Pperf`.
 
 The rule the validation suite follows is that **every case compares the model against something
@@ -881,8 +909,8 @@ concurrency safe was taken in week 1, in `domain`, before any thread existed.
 | File I/O | Sounding, telemetry and configuration readers; CSV, GeoJSON and PNG writers; SHA-256 over every ingested file |
 | JDBC and a relational database | 13 tables, 8 DAOs, `PreparedStatement` throughout, transactions and generated keys; **T-S1** fails the build on any concatenated SQL |
 | Multithreading | Two explicit fixed pools with `CompletionService` and deliberate shutdown; one derived seed per worker; T-R1 proves 1 thread and 4 threads agree to 1e-9 |
-| Unit testing | 302 tests by default plus the perf-tagged evaluations; JaCoCo gate at 80% on `core.*` and `estimation`, measured at 91.7–100% |
-| Version control with incremental history | Commits every week from scaffold to submission, each naming the requirement it implements; tags `v0.1-mvp` … `v1.0-submission` (SC-10) |
+| Unit testing | 304 tests by default plus the perf-tagged evaluations; JaCoCo gate at 80% on `core.*` and `estimation`, measured at 91.7–100%; 81.6% overall (SC-8) |
+| Version control with incremental history | Commits every week from scaffold to submission, each naming the requirement it implements; tags `v0.1-mvp` … `v1.0-submission`, local-only for the reason in SC-10 |
 | Documentation | `README.md`, `statement.md`, `docs/BLUEPRINT.md`, 18 ADRs, `docs/diagrams/`, this report |
 | Build reproducibility | Maven wrapper committed; JDK 21 the only prerequisite; **no command or test touches the network** |
 
@@ -896,14 +924,29 @@ these items are open rather than quietly omitted:
 - **DS-3** is corroborated by two independent implementations agreeing to 0.00987%, not yet
   transcribed from the primary document. It carries a `verify:` marker.
 - **DS-4**'s catalogue burst and launch diameters carry a `verify:` marker.
+- **The lifting-gas molar masses** and **the launch site's geoid undulation** carry markers for the
+  same reason: the standards body and the geoid model are both unreachable from here.
+- **The pre-flight dispersion spreads** are stated engineering estimates. They cannot be measured
+  from DS-6, because DS-6's truth parameters are drawn from the very specification the spreads
+  define — an earlier note in the code proposing exactly that fit has been withdrawn as circular.
+- **The barometric altitude sigma factor** is measured at 1.71 on DS-6 and held at 4.0, because
+  DS-6 generates its pressures from the same atmosphere model the reader inverts and therefore
+  cannot show the model bias the factor mainly exists for. V-5 in the ledger gives the argument.
 - **T-V5's ascent-Cd criterion** is measured and reported rather than gated, for the reason in §11.
   Amending it is not the implementer's decision.
-- **SC-9** requires a capture of a CI run list that only exists once the branch is pushed.
-- **Two references** in §16 need their full citations checked before submission.
+- **Two references** in §17 need their full citations checked before submission.
 - **Parachute-drag recovery is bimodal** and unexplained; **burst-scale band coverage** is 15/20
   against a nominal 18/20.
 
-`grep -rn "verify:" src data docs` lists every remaining marker.
+Every one of these is blocked on a document the build environment cannot reach — `ntrs.nasa.gov`,
+`weather.uwyo.edu`, `ciaaw.org` and `doi.org` all resolve to nothing here — or on a decision that
+belongs to the course owner. None is blocked on more work in this repository.
+
+`docs/VERIFICATION.md` is the ledger: one entry per marker giving the exact source, the exact
+check, and what changes if the answer differs. It is not a document anybody has to remember to
+update, because `SourceRulesTest.everyMarkerHasARouteToClearingIt` walks `src/main` and `data/` and
+fails the build on any marker without an entry. A marker is cheap to write and easy to forget;
+tying it to a test is what keeps the list honest as the code moves.
 
 ---
 
@@ -920,6 +963,7 @@ fresh clone can reproduce all of them, offline:
 | T-V5 and band coverage | `./mvnw test -Pperf -Dtest=ParameterRecoveryTest` |
 | T-V6 | `./mvnw test -Pperf -Dtest=LandingErrorTest` |
 | T-V7 | `./mvnw test -Pperf -Dtest=EllipseCalibrationTest` |
+| Sampler convergence (SC-13, ADR-14) | `./mvnw test -Pperf -Dtest=SamplerConvergenceTest` — about 3 min |
 | The footprint and PL-1 / PL-2 | `./scripts/run.sh predict --members 1000 --sounding-id 1` |
 | The posterior, PL-3, and re-prediction timing | `./scripts/run.sh replay --log data/truth/ds6-flight-01.csv --every 20` |
 | DS-6 itself | `./scripts/run.sh synth` — regenerates all twenty flights byte-identically |
