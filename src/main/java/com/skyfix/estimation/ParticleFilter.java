@@ -631,6 +631,25 @@ public final class ParticleFilter {
         return Duration.between(launchEpoch, epoch).toNanos() / 1e9;
     }
 
+    /**
+     * The vertical rate the particle set believes, in m/s.
+     *
+     * <p>Not the telemetry's rate. A flight computer reports position, so an observed rate is a
+     * difference of two noisy altitudes and at 1 Hz with a 10 m GPS is uncertain by about 7 m/s —
+     * comparable to the balloon's whole ascent rate. The particles' rate is the output of the
+     * dynamics integrated against the entire flight so far, so it is smooth and physically
+     * consistent, which is what anything continuing the flight from here actually needs.
+     *
+     * @return the weighted mean vertical rate across the particle set
+     */
+    public double weightedVerticalRateMs() {
+        double total = 0.0;
+        for (int i = 0; i < particleCount; i++) {
+            total += weights[i] * particles[i].state().verticalRateMs();
+        }
+        return total;
+    }
+
     /** @return the posterior after the most recent update */
     public Posterior posterior() {
         return posterior;

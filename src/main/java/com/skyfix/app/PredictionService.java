@@ -170,9 +170,38 @@ public final class PredictionService {
                                            DispersionSpec spec, int memberCount,
                                            RunContext context, Path outputDir)
             throws SkyfixException {
+        return predictFootprint(mission, config, soundingId, null, settings, spec, memberCount,
+                context, outputDir);
+    }
+
+    /**
+     * Predicts a footprint against a wind field supplied directly rather than looked up.
+     *
+     * <p>For callers that hold a wind field the database does not: an evaluation scoring against
+     * synthetic flights has to predict in the <em>same</em> wind the flights were generated in, or
+     * it is measuring the wind mismatch rather than whatever it meant to measure.
+     *
+     * @param mission     the mission
+     * @param config      the stored balloon configuration
+     * @param soundingId  the sounding to record on the run, or {@code null}
+     * @param windField   the wind field to use; when {@code null} it is resolved from
+     *                    {@code soundingId} as usual
+     * @param settings    integration settings
+     * @param spec        how far each parameter is dispersed
+     * @param memberCount how many members to fly
+     * @param context     provenance for this execution
+     * @param outputDir   where exports are written
+     * @return the run record, the ensemble, the fitted ellipses and the nominal trajectory
+     * @throws SkyfixException if too many members fail, or the run cannot be stored
+     */
+    public EnsembleResult predictFootprint(Mission mission, StoredBalloonConfig config,
+                                           Long soundingId, WindField windField,
+                                           SimSettings settings, DispersionSpec spec,
+                                           int memberCount, RunContext context, Path outputDir)
+            throws SkyfixException {
 
         IntegratorFactory.create(settings.integrator());
-        WindField wind = resolveWindField(soundingId);
+        WindField wind = windField != null ? windField : resolveWindField(soundingId);
         BalloonConfig balloon = config.config();
 
         RunRecord run = runs.save(new RunRecord(null, mission.id(), config.id(), soundingId, null,

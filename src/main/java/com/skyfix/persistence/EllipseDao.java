@@ -24,6 +24,10 @@ public final class EllipseDao {
             "INSERT INTO landing_ellipse (run_id, update_epoch_utc, confidence, center_lat, "
                     + "center_lon, semi_major_m, semi_minor_m, azimuth_deg, area_km2) "
                     + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    private static final String SELECT_TIMELINE =
+            "SELECT update_epoch_utc, confidence, center_lat, center_lon, semi_major_m, "
+                    + "semi_minor_m, azimuth_deg FROM landing_ellipse "
+                    + "WHERE run_id = ? ORDER BY update_epoch_utc, confidence";
     private static final String SELECT_FOR_RUN =
             "SELECT id, update_epoch_utc, confidence, center_lat, center_lon, semi_major_m, "
                     + "semi_minor_m, azimuth_deg, area_km2 FROM landing_ellipse "
@@ -133,6 +137,60 @@ public final class EllipseDao {
             return ellipses;
         } catch (SQLException e) {
             throw new PersistenceException("cannot read ellipses for run " + runId, e);
+        }
+    }
+
+    /**
+     * Reads every ellipse stored for a run, each with the epoch it was computed at.
+     *
+     * <p>{@link #findForRun} drops the epoch, which is all a pre-flight footprint needs. A replay's
+     * ellipses are a <em>series</em> — that is the whole point of FR-3.3 — and scoring one
+     * (FR-4.1) or plotting error against time (PL-4) needs to know which moment each belongs to.
+     *
+     * @param runId            the run
+     * @param groundElevationM ground elevation to give the reconstructed centres, metres
+     * @return the ellipses in epoch order, each tagged; a pre-flight footprint has no epoch and is
+     *         reported with {@code null}
+     * @throws PersistenceException if the query fails
+     */
+    public List<TimedEllipse> findTimeline(long runId, double groundElevationM)
+            throws PersistenceException {
+        List<TimedEllipse> out = new ArrayList<>();
+        try (PreparedStatement ps = database.connection().prepareStatement(SELECT_TIMELINE)) {
+            ps.setLong(1, runId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String epoch = rs.getString("update_epoch_utc");
+                    out.add(new TimedEllipse(
+                            epoch == null ? null : java.time.Instant.parse(epoch),
+                            new LandingEllipse(
+                                    rs.getDouble("confidence"),
+                                    new GeoPoint(rs.getDouble("center_lat"),
+                                            rs.getDouble("center_lon"), groundElevationM),
+                                    rs.getDouble("semi_major_m"),
+                                    rs.getDouble("semi_minor_m"),
+                                    rs.getDouble("azimuth_deg"),
+                                    0)));
+                }
+            }
+            return out;
+        } catch (SQLException e) {
+            throw new PersistenceException("cannot read the ellipse timeline for run " + runId, e);
+        }
+    }
+
+    /**
+     * One stored ellipse and the moment it was computed at.
+     *
+     * @param epochUtc the telemetry epoch this re-prediction was made at, or {@code null} for a
+     *                 pre-flight footprint
+     * @param ellipse  the ellipse
+     */
+    public record TimedEllipse(java.time.Instant epochUtc, LandingEllipse ellipse) {
+
+        /** @return whether this is a pre-flight footprint rather than an in-flight re-prediction */
+        public boolean isPreflight() {
+            return epochUtc == null;
         }
     }
 }

@@ -5,7 +5,10 @@ import com.skyfix.core.atmos.AtmosphericState;
 import com.skyfix.domain.Ensemble;
 import com.skyfix.domain.GeoPoint;
 import com.skyfix.domain.Geodesy;
+import com.skyfix.domain.FlightParameters;
 import com.skyfix.domain.LandingEllipse;
+import com.skyfix.domain.Posterior;
+import com.skyfix.domain.PredictionError;
 import com.skyfix.domain.StateHistory;
 import com.skyfix.domain.error.PersistenceException;
 import com.skyfix.domain.error.SkyfixException;
@@ -82,6 +85,245 @@ public final class PlotExporter {
         written.add(write(runDir.resolve("pl2-footprint.png"),
                 footprintChart(ensemble, ellipses, launch)));
         return written;
+    }
+
+    /**
+     * Writes PL-3, one panel per estimated parameter: the posterior median and its 5-95% band
+     * against update epoch, with the truth drawn as a line (FR-4.2).
+     *
+     * <p>Four files rather than one, because four bands on shared axes would be unreadable and
+     * because the parameters have unrelated units. The report places them as a 2x2 figure.
+     *
+     * <p>This is the chart that shows what the estimator is actually doing: burst scale sitting at
+     * its prior for the whole ascent and collapsing at burst, ascent Cd narrowing early and then
+     * frozen, and — with a pooled bank (ADR-18) — bands wide enough to contain the truth rather
+     * than a hairline that does not.
+     *
+     * @param runDir        the output directory
+     * @param flightSeconds seconds since launch for each posterior, same length as {@code history}
+     * @param history       the posterior at each update, in time order
+     * @param truth         the values the flight was generated from, or {@code null} if unknown
+     * @param nominalBurstDiameterM the catalogue diameter the burst scale multiplies
+     * @return the files written, one per parameter
+     * @throws PersistenceException if a chart cannot be written
+     */
+    public static List<Path> exportPosteriorHistory(Path runDir, double[] flightSeconds,
+                                                    List<Posterior> history,
+                                                    FlightParameters truth,
+                                                    double nominalBurstDiameterM)
+            throws PersistenceException {
+        configureHeadless();
+        if (flightSeconds.length != history.size()) {
+            throw new IllegalArgumentException("one epoch per posterior is required, got "
+                    + flightSeconds.length + " and " + history.size());
+        }
+        List<Path> written = new ArrayList<>();
+        String[] names = {Posterior.FREE_LIFT, Posterior.ASCENT_CD, Posterior.BURST_SCALE,
+                Posterior.CHUTE_CD};
+        String[] labels = {"free lift (kg)", "ascent drag coefficient",
+                "burst diameter (x catalogue)", "parachute drag coefficient"};
+        String[] files = {"pl3-free-lift.png", "pl3-ascent-cd.png", "pl3-burst-scale.png",
+                "pl3-chute-cd.png"};
+        double[] truths = truth == null ? null : new double[]{
+                truth.freeLiftKg(), truth.ascentCd(),
+                truth.burstDiameterM() / nominalBurstDiameterM, truth.chuteCd()};
+
+        for (int d = 0; d < names.length; d++) {
+            written.add(write(runDir.resolve(files[d]), posteriorChart(flightSeconds, history,
+                    names[d], labels[d], truths == null ? Double.NaN : truths[d])));
+        }
+        return written;
+    }
+
+    /**
+     * Writes PL-4, landing error against time: the frozen pre-flight prediction as a flat line and
+     * the in-flight re-predictions as a curve (FR-4.2, O4).
+     *
+     * <p>The single chart the fourth objective stands on. If the curve does not fall below the
+     * line, watching the flight bought nothing.
+     *
+     * @param runDir the output directory
+     * @param scored the scored prediction series
+     * @return the file written
+     * @throws PersistenceException if the chart cannot be written
+     */
+    public static Path exportLandingError(Path runDir, PredictionError scored)
+            throws PersistenceException {
+        configureHeadless();
+        return write(runDir.resolve("pl4-landing-error.png"), landingErrorChart(scored));
+    }
+
+    /**
+     * Writes PL-5, ellipse calibration: nominal confidence against the fraction actually contained
+     * (FR-4.2, T-V7).
+     *
+     * <p>A perfectly calibrated set of ellipses lies on the diagonal. Above it the ellipses are too
+     * large and the prediction is timid; below it they are too small and the prediction is
+     * over-confident, which is the failure that matters.
+     *
+     * @param runDir    the output directory
+     * @param nominal   the nominal confidence levels, in (0, 1)
+     * @param empirical the fraction of landings actually inside each, same length
+     * @return the file written
+     * @throws PersistenceException if the chart cannot be written
+     */
+    public static Path exportEllipseCalibration(Path runDir, double[] nominal, double[] empirical)
+            throws PersistenceException {
+        configureHeadless();
+        if (nominal.length != empirical.length || nominal.length == 0) {
+            throw new IllegalArgumentException(
+                    "one empirical coverage per nominal level is required");
+        }
+        return write(runDir.resolve("pl5-ellipse-calibration.png"),
+                calibrationChart(nominal, empirical));
+    }
+
+    /** One PL-3 panel: median, band and truth for a single parameter. */
+    private static XYChart posteriorChart(double[] flightSeconds, List<Posterior> history,
+                                          String name, String label, double truth) {
+        XYChart chart = new XYChartBuilder()
+                .width(WIDTH).height(HEIGHT)
+                .title("PL-3  Posterior for " + label)
+                .xAxisTitle("time since launch (min)")
+                .yAxisTitle(label)
+                .build();
+        ChartStyle.apply(chart.getStyler());
+        chart.getStyler().setXAxisMin(0.0);
+
+        double[] minutes = new double[flightSeconds.length];
+        double[] median = new double[history.size()];
+        double[] low = new double[history.size()];
+        double[] high = new double[history.size()];
+        for (int i = 0; i < history.size(); i++) {
+            minutes[i] = flightSeconds[i] / 60.0;
+            Posterior.Band band = history.get(i).band(name);
+            median[i] = band.median();
+            low[i] = band.p05();
+            high[i] = band.p95();
+        }
+
+        // The band edges are drawn as two hairlines rather than a filled area: XChart's area fill
+        // would need a stacked series, and two rules read just as clearly without inventing a
+        // rendering the data has to be reshaped for.
+        XYSeries lower = chart.addSeries("5-95% band", minutes, low);
+        lower.setLineColor(ChartStyle.BLUE_LIGHT);
+        lower.setLineWidth(ChartStyle.HAIRLINE);
+        lower.setLineStyle(SeriesLines.SOLID);
+        lower.setMarker(SeriesMarkers.NONE);
+
+        XYSeries upper = chart.addSeries("band upper", minutes, high);
+        upper.setLineColor(ChartStyle.BLUE_LIGHT);
+        upper.setLineWidth(ChartStyle.HAIRLINE);
+        upper.setLineStyle(SeriesLines.SOLID);
+        upper.setMarker(SeriesMarkers.NONE);
+        upper.setShowInLegend(false);
+
+        XYSeries medianSeries = chart.addSeries("posterior median", minutes, median);
+        medianSeries.setLineColor(ChartStyle.SERIES_1);
+        medianSeries.setLineWidth(ChartStyle.PRIMARY_LINE);
+        medianSeries.setLineStyle(SeriesLines.SOLID);
+        medianSeries.setMarker(SeriesMarkers.NONE);
+
+        if (!Double.isNaN(truth)) {
+            XYSeries truthSeries = chart.addSeries("truth",
+                    new double[]{0.0, minutes[minutes.length - 1]},
+                    new double[]{truth, truth});
+            truthSeries.setLineColor(ChartStyle.SERIES_2);
+            truthSeries.setLineWidth(ChartStyle.HAIRLINE);
+            truthSeries.setLineStyle(SeriesLines.SOLID);
+            truthSeries.setMarker(SeriesMarkers.NONE);
+        }
+        return chart;
+    }
+
+    /** PL-4: the in-flight error curve against the frozen baseline. */
+    private static XYChart landingErrorChart(PredictionError scored) {
+        XYChart chart = new XYChartBuilder()
+                .width(WIDTH).height(HEIGHT)
+                .title("PL-4  Landing error against time, live and frozen")
+                .xAxisTitle("time since launch (min)")
+                .yAxisTitle("distance from the actual landing (km)")
+                .build();
+        ChartStyle.apply(chart.getStyler());
+        chart.getStyler().setXAxisMin(0.0);
+        chart.getStyler().setYAxisMin(0.0);
+
+        int n = scored.updates().size();
+        double[] minutes = new double[n];
+        double[] errorKm = new double[n];
+        double[] claimedKm = new double[n];
+        for (int i = 0; i < n; i++) {
+            PredictionError.Update u = scored.updates().get(i);
+            minutes[i] = u.flightSeconds() / 60.0;
+            errorKm[i] = u.errorM() / 1000.0;
+            claimedKm[i] = u.semiMajorM() / 1000.0;
+        }
+
+        XYSeries frozen = chart.addSeries("frozen pre-flight prediction",
+                new double[]{0.0, minutes[n - 1]},
+                new double[]{scored.frozenErrorM() / 1000.0, scored.frozenErrorM() / 1000.0});
+        frozen.setLineColor(ChartStyle.SERIES_2);
+        frozen.setLineWidth(ChartStyle.PRIMARY_LINE);
+        frozen.setLineStyle(SeriesLines.SOLID);
+        frozen.setMarker(SeriesMarkers.NONE);
+
+        // The claimed uncertainty behind the error, so a reader can see not just whether the
+        // prediction improved but whether it was ever honest about how wrong it might be.
+        XYSeries claimed = chart.addSeries("95% ellipse semi-major", minutes, claimedKm);
+        claimed.setLineColor(ChartStyle.MUTED);
+        claimed.setLineWidth(ChartStyle.HAIRLINE);
+        claimed.setLineStyle(SeriesLines.SOLID);
+        claimed.setMarker(SeriesMarkers.NONE);
+
+        XYSeries live = chart.addSeries("live re-prediction", minutes, errorKm);
+        live.setLineColor(ChartStyle.SERIES_1);
+        live.setLineWidth(ChartStyle.PRIMARY_LINE);
+        live.setLineStyle(SeriesLines.SOLID);
+        live.setMarker(SeriesMarkers.NONE);
+
+        scored.atBurst().ifPresent(burst -> {
+            XYSeries marker = chart.addSeries("burst",
+                    new double[]{burst.flightSeconds() / 60.0},
+                    new double[]{burst.errorM() / 1000.0});
+            marker.setXYSeriesRenderStyle(XYSeries.XYSeriesRenderStyle.Scatter);
+            marker.setMarkerColor(ChartStyle.SERIES_3);
+            marker.setMarker(SeriesMarkers.CIRCLE);
+        });
+        return chart;
+    }
+
+    /** PL-5: empirical containment against nominal confidence, with the ideal diagonal. */
+    private static XYChart calibrationChart(double[] nominal, double[] empirical) {
+        XYChart chart = new XYChartBuilder()
+                .width(SQUARE).height(SQUARE)
+                .title("PL-5  Ellipse calibration")
+                .xAxisTitle("nominal confidence (%)")
+                .yAxisTitle("landings actually contained (%)")
+                .build();
+        ChartStyle.apply(chart.getStyler());
+        chart.getStyler().setXAxisMin(0.0);
+        chart.getStyler().setXAxisMax(100.0);
+        chart.getStyler().setYAxisMin(0.0);
+        chart.getStyler().setYAxisMax(100.0);
+
+        XYSeries ideal = chart.addSeries("perfectly calibrated",
+                new double[]{0.0, 100.0}, new double[]{0.0, 100.0});
+        ideal.setLineColor(ChartStyle.MUTED);
+        ideal.setLineWidth(ChartStyle.HAIRLINE);
+        ideal.setLineStyle(SeriesLines.SOLID);
+        ideal.setMarker(SeriesMarkers.NONE);
+
+        double[] x = new double[nominal.length];
+        double[] y = new double[nominal.length];
+        for (int i = 0; i < nominal.length; i++) {
+            x[i] = nominal[i] * 100.0;
+            y[i] = empirical[i] * 100.0;
+        }
+        XYSeries measured = chart.addSeries("measured", x, y);
+        measured.setXYSeriesRenderStyle(XYSeries.XYSeriesRenderStyle.Scatter);
+        measured.setMarkerColor(ChartStyle.SERIES_1);
+        measured.setMarker(SeriesMarkers.CIRCLE);
+        return chart;
     }
 
     /**

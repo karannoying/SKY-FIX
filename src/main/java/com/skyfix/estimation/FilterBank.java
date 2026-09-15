@@ -266,6 +266,23 @@ public final class FilterBank implements AutoCloseable {
                 "a filter in the bank failed unexpectedly: " + cause);
     }
 
+    /**
+     * The vertical rate the pooled set believes, in m/s.
+     *
+     * <p>See {@link ParticleFilter#weightedVerticalRateMs()} for why this exists rather than using
+     * the telemetry's own differenced rate. Members are weighted equally, as everywhere else in
+     * the pooling.
+     *
+     * @return the mean of the members' weighted mean vertical rates
+     */
+    public double weightedVerticalRateMs() {
+        double total = 0.0;
+        for (ParticleFilter filter : filters) {
+            total += filter.weightedVerticalRateMs();
+        }
+        return total / filters.size();
+    }
+
     /** @return the pooled posterior after the most recent update */
     public Posterior posterior() {
         return posterior;

@@ -129,6 +129,35 @@ public final class ReplayService {
     public ReplayResult replay(Mission mission, StoredBalloonConfig config, Long soundingId,
                                Long flightLogId, TelemetrySeries series, SimSettings settings,
                                ReplayOptions options, RunContext context) throws SkyfixException {
+        return replay(mission, config, soundingId, null, flightLogId, series, settings, options,
+                context);
+    }
+
+    /**
+     * Replays against a wind field supplied directly rather than looked up.
+     *
+     * <p>Same reason as {@link PredictionService#predictFootprint(Mission, StoredBalloonConfig,
+     * Long, com.skyfix.core.atmos.WindField, SimSettings, DispersionSpec, int, RunContext,
+     * java.nio.file.Path)}: an evaluation must replay in the wind its synthetic flights were
+     * generated in, or it measures the wind mismatch instead of the estimator.
+     *
+     * @param mission      the mission the log belongs to
+     * @param config       the stored balloon configuration
+     * @param soundingId   the sounding to record on the run, or {@code null}
+     * @param windField    the wind field to use; when {@code null} it is resolved from
+     *                     {@code soundingId} as usual
+     * @param flightLogId  the stored flight log, or {@code null}
+     * @param series       the telemetry to replay
+     * @param settings     integration settings
+     * @param options      particle count, ensemble size and re-prediction cadence
+     * @param context      provenance for this execution
+     * @return what the replay produced
+     * @throws SkyfixException if the log is unusable, or the run cannot be stored
+     */
+    public ReplayResult replay(Mission mission, StoredBalloonConfig config, Long soundingId,
+                               WindField windField, Long flightLogId, TelemetrySeries series,
+                               SimSettings settings, ReplayOptions options, RunContext context)
+            throws SkyfixException {
 
         // Rejected before a row is written, so a bad integrator name surfaces as a validation
         // failure naming the field rather than as a CHECK-constraint error on a half-built run.
@@ -140,7 +169,7 @@ public final class ReplayService {
                     "a replay needs at least one usable sample");
         }
 
-        WindField wind = resolveWindField(soundingId);
+        WindField wind = windField != null ? windField : resolveWindField(soundingId);
         BalloonConfig balloon = config.config();
         GeoPoint launch = mission.launch();
 
@@ -262,7 +291,8 @@ public final class ReplayService {
 
             long started = System.nanoTime();
             List<LandingEllipse> fitted = repredict(runner, balloon, settings, posterior,
-                    measuredState(observed, balloon, launch, posterior, burst), groundElevationM,
+                    measuredState(observed, balloon, launch, posterior, burst,
+                            filter.weightedVerticalRateMs()), groundElevationM,
                     context.seed() + repredictions, options.repredictMembers());
             repredictNanos += System.nanoTime() - started;
             repredictions++;
@@ -294,17 +324,28 @@ public final class ReplayService {
      *
      * <p>Position and altitude come straight from the telemetry, because they are measured, and
      * the whole point of a re-prediction is that the flown part of the flight is not modelled
-     * again. The envelope diameter cannot be measured, so it is reconstructed from the posterior
+     * again. Everything else comes from the filter.
+     *
+     * <p><strong>The vertical rate must not come from the telemetry.</strong> A flight computer
+     * reports position, so an observed rate is a difference of two noisy altitudes — at 1 Hz with
+     * a 10 m GPS, uncertain by about 7 m/s against an ascent rate of 5. Seeding two hundred forward
+     * flights with that number does not merely add noise: quadratic drag damping scales with the
+     * rate, so a sample that happens to read 25 m/s puts the damping at 12 /s, past RK4's stability
+     * limit at the default step, and the members are refused outright. Measured: 128 of 200 members
+     * discarded at 1,012 m, from a flight that was ascending normally. The filter's own rate is the
+     * dynamics integrated against the whole flight so far, so it is smooth and physically
+     * consistent, which is exactly what continuing the flight needs.
+     *
+     * <p>The envelope diameter cannot be measured either, so it is reconstructed from the posterior
      * median's gas mass at the current ambient conditions — and the phase comes from the burst
-     * detector rather than from the sign of a noisy vertical rate, which at 1 Hz with a 10 m GPS
-     * changes sign constantly.
+     * detector rather than from the sign of a noisy rate, which at 1 Hz changes sign constantly.
      *
      * <p>The state's clock is reset to zero: the ensemble it seeds integrates the remaining flight,
      * and the wind field is indexed from the same origin the pre-flight prediction used.
      */
     private BalloonState measuredState(Observation observed, BalloonConfig balloon,
-                                       GeoPoint launch, Posterior posterior, BurstEvent burst)
-            throws SkyfixException {
+                                       GeoPoint launch, Posterior posterior, BurstEvent burst,
+                                       double verticalRateMs) throws SkyfixException {
         FlightParameters median = posterior.medianParameters(balloon.burstDiameterM(), 1.0);
         Phase phase = burst == null ? Phase.ASCENT : Phase.DESCENT;
 
@@ -321,8 +362,7 @@ public final class ReplayService {
 
         return new BalloonState(0.0,
                 new GeoPoint(observed.latitudeDeg(), observed.longitudeDeg(), observed.altitudeM()),
-                observed.hasVerticalRate() ? observed.verticalRateMs() : 0.0,
-                diameter, phase, false);
+                verticalRateMs, diameter, phase, false);
     }
 
     private List<LandingEllipse> repredict(EnsembleRunner runner, BalloonConfig balloon,
