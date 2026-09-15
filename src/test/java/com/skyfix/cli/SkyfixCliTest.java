@@ -329,4 +329,82 @@ class SkyfixCliTest {
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("mission.json");
     }
+
+    @Test
+    @DisplayName("replay runs end to end, prints bands, and writes PL-3")
+    void replayCommandRunsEndToEnd() throws Exception {
+        // A short synthetic log, so the CLI surface is exercised without a two-hour flight.
+        Path log = tempDir.resolve("cli-flight.csv");
+        new com.skyfix.io.SyntheticFlightWriter(
+                new com.skyfix.core.atmos.Ussa1976Atmosphere(),
+                new com.skyfix.core.atmos.ConstantWindField(12.0, -4.0))
+                .write(log,
+                        new com.skyfix.io.ConfigLoader().loadBalloon(balloonFile()),
+                        com.skyfix.domain.FlightParameters.nominal(
+                                new com.skyfix.io.ConfigLoader().loadBalloon(balloonFile())),
+                        com.skyfix.domain.SimSettings.builder().groundElevationM(500.0).build(),
+                        new com.skyfix.domain.GeoPoint(23.2599, 77.4126, 500.0),
+                        java.time.Instant.parse("2026-09-14T04:30:00Z"),
+                        com.skyfix.domain.NoiseSpec.standard(), 4242L);
+
+        Path db = tempDir.resolve("replay.db");
+        Path outDir = tempDir.resolve("replay-out");
+        int code = run("replay",
+                "--mission", missionFile().toString(),
+                "--balloon", balloonFile().toString(),
+                "--log", log.toString(),
+                "--every", "400",
+                "--filters", "2",
+                "--particles", "20",
+                "--members", "8",
+                "--db", db.toString(),
+                "--out", outDir.toString());
+
+        assertThat(code).as("stderr was: %s", stderr()).isZero();
+        assertThat(stdout())
+                .contains("replay estimate")
+                .contains("free lift")
+                .contains("parachute Cd")
+                .contains("re-predict");
+        assertThat(stderr()).doesNotContain("Exception");
+
+        // PL-3 is one panel per estimated parameter (FR-4.2).
+        try (var files = Files.walk(outDir)) {
+            assertThat(files.filter(f -> f.getFileName().toString().startsWith("pl3-")).count())
+                    .isEqualTo(4);
+        }
+    }
+
+    @Test
+    @DisplayName("replay without a log names the missing option rather than failing obscurely")
+    void replayWithoutALogIsRejected() throws Exception {
+        int code = run("replay",
+                "--mission", missionFile().toString(),
+                "--balloon", balloonFile().toString(),
+                "--db", tempDir.resolve("x.db").toString());
+        assertThat(code).isNotZero();
+        assertThat(stderr()).contains("log");
+        assertThat(stderr()).doesNotContain("Exception in thread");
+    }
+
+    @Test
+    @DisplayName("a particle budget that cannot be split across the filters is refused by name")
+    void replayRefusesAnUnsplittableBudget() throws Exception {
+        Path log = tempDir.resolve("tiny.csv");
+        Files.writeString(log, """
+                epoch_utc,packet_id,lat,lon,alt_gps_m,pressure_pa,temperature_k
+                2026-09-14T04:30:00Z,1,23.2599,77.4126,500.0,95500.0,288.0
+                2026-09-14T04:30:01Z,2,23.2599,77.4126,505.0,95440.0,288.0
+                """);
+        int code = run("replay",
+                "--mission", missionFile().toString(),
+                "--balloon", balloonFile().toString(),
+                "--log", log.toString(),
+                "--filters", "16",
+                "--particles", "8",
+                "--db", tempDir.resolve("y.db").toString());
+        assertThat(code).isNotZero();
+        assertThat(stderr()).contains("particles");
+        assertThat(stderr()).doesNotContain("Exception in thread");
+    }
 }

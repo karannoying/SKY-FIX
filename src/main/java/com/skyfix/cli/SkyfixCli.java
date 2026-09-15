@@ -10,10 +10,12 @@ import com.skyfix.app.ValidationService;
 import com.skyfix.domain.BalloonConfig;
 import com.skyfix.domain.DispersionSpec;
 import com.skyfix.domain.NoiseSpec;
+import com.skyfix.domain.Posterior;
 import com.skyfix.domain.SimSettings;
 import com.skyfix.domain.error.SkyfixException;
 import com.skyfix.domain.error.ValidationException;
 import com.skyfix.io.ConfigLoader;
+import com.skyfix.io.PlotExporter;
 import com.skyfix.persistence.Database;
 import com.skyfix.persistence.FlightLog;
 import com.skyfix.persistence.Mission;
@@ -244,7 +246,13 @@ public final class SkyfixCli {
                     mission, ingested.config(), soundingId, log.log().id(), log.series(),
                     settings, replayOptions, context);
 
+            Path runDir = Path.of(options.getOrDefault("out", "out"))
+                    .resolve("run-" + result.run().id());
+            List<Path> plots = exportReplayPlots(runDir, result,
+                    ingested.config().config().burstDiameterM());
+
             reporter.printReplay(result);
+            reporter.info("  wrote " + plots.size() + " plots to " + runDir);
             reporter.info(String.format(
                     "  seed %d | git %s | %s dt=%s s | every %d samples | %d ms",
                     context.seed(), context.gitSha(), settings.integrator(),
@@ -252,6 +260,30 @@ public final class SkyfixCli {
                     context.elapsedMs()));
             return 0;
         }
+    }
+
+    /**
+     * Writes PL-3 for a replay: the posterior for each parameter against update epoch.
+     *
+     * <p>Built from the re-predictions rather than from every assimilated sample. A full-rate
+     * replay produces thousands of posteriors and a chart with a point per second says nothing a
+     * chart with a point per re-prediction does not.
+     */
+    private static List<Path> exportReplayPlots(Path runDir, ReplayService.ReplayResult result,
+                                                double nominalBurstDiameterM)
+            throws SkyfixException {
+        double[] flightSeconds = new double[result.updates().size()];
+        List<Posterior> history = new ArrayList<>(result.updates().size());
+        for (int i = 0; i < result.updates().size(); i++) {
+            flightSeconds[i] = result.updates().get(i).flightSeconds();
+            history.add(result.updates().get(i).posterior());
+        }
+        if (history.isEmpty()) {
+            return List.of();
+        }
+        // No truth line: a real replay has no truth to draw. The evaluation tests supply one.
+        return PlotExporter.exportPosteriorHistory(runDir, flightSeconds, history, null,
+                nominalBurstDiameterM);
     }
 
     private int synth(Map<String, String> options) throws SkyfixException {
@@ -419,6 +451,7 @@ public final class SkyfixCli {
                     --log      <flight.csv>      telemetry log to replay   (required)
                     --sounding-id <n>            wind field to advect with
                     --every    <n>               assimilate every n-th sample (default: 1)
+                    --out      <dir>             export directory (default: out)
                     --particles <n>              total particle budget (default: 2000, ADR-18)
                     --filters  <n>               independent filters to pool (default: 16);
                                                  1 gives a single filter, whose band is not

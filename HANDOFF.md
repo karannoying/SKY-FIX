@@ -193,9 +193,52 @@ Work in order. The MVP is tagged, so everything below is additive.
    **Still to do before tagging `v0.3-estimator`:** the tag itself, and a decision on the T-V5
    criterion above.
 
-5. **Band calibration (T-V6), `ReportService`, T-V7, PL-3…PL-6, coverage to 80% on `estimation`.**
-   Week 9, tag `v0.4-validated`. Start with the 0/20 coverage above — everything else in the report
-   rests on the bands meaning something.
+5. ~~Band calibration, `ReportService`, T-V6, T-V7, PL-3…PL-5, T-E3, coverage to 80%.~~
+   **Built and green.** Tag `v0.4-validated`.
+
+   **The calibration defect is fixed, and the diagnosis is the interesting part.** Eight filters
+   identical but for their seed disagreed about ascent Cd by 0.169 while each reported a band of
+   width 0.0017 — every filter understating its own uncertainty by a factor of about a hundred. So
+   the dominant error was Monte Carlo, not statistical, and no single filter could ever see it.
+   `FilterBank` pools independent filters over the *same* particle budget; ADR-18 has the numbers.
+
+   | 5-95% band covers truth | free lift | ascent Cd | burst scale | chute Cd | burst ≤ 500 m |
+   |---|---|---|---|---|---|
+   | 1 filter × 500 | 0/20 | 0/20 | 0/20 | 5/20 | 20/20 |
+   | 8 × 62 (same 500 budget) | 13/20 | 16/20 | 14/20 | 16/20 | 19/20 |
+   | 16 × 125 (default) | 17/20 | 17/20 | 15/20 | 20/20 | 20/20 |
+
+   **T-V6 passes: 74.0% median landing-error reduction at burst**, against 30% required, across all
+   twenty flights, from a median frozen error of 15.4 km. Scored at burst rather than at landing,
+   because burst is when a recovery team commits to a drive and the whole descent is still ahead.
+   Two flights go negative — both had a wind scale near 1.0, so the pre-flight guess was already
+   within 1.4 km. The benefit is large in the median and not guaranteed per flight.
+
+   **T-V7 passes: the 95% ellipse contains 94.6% of the cloud it was fitted to and 94.0% of an
+   independent one** (window 0.90–0.98). The 50% ellipse over-covers at ~56%, and the measurement
+   says why: the fitted footprint is 76.4 × 0.5 km, an aspect ratio near 150, because the sounding's
+   wind direction barely turns with altitude. **The landing footprint is effectively
+   one-dimensional** — the uncertainty is about how long the flight lasts, not where it goes — so a
+   chi-square scaling for two degrees of freedom is generous at low confidence and converges
+   towards nominal as confidence rises. Good report material for §11.
+
+   Two defects found by measurement, both in ADR-3/the commit bodies with their numbers: the
+   re-prediction was being seeded with the telemetry's own vertical rate (a difference of noisy
+   altitudes, ±7 m/s) which put drag damping past RK4's stability limit and discarded 128 of 200
+   members on a normal ascent; and `EnsembleRunner`'s 1% failure threshold failed any ensemble
+   under a hundred members on its first bad draw.
+
+   Coverage: `estimation` **91.7%**, `core.atmos` 100%, `core.flight` 93.6%, `domain` 93.6% — the
+   80% gate passes. `io` 69.4% and `persistence` 68.7% are outside the strict gate by design
+   (BLUEPRINT §11); `cli` is 48% + the new replay cases.
+
+   **Still open, and worth an hour each before the report:**
+   - Parachute drag is bimodal — sixteen flights under 5%, most under 1%, four at 15-26%. Not
+     correlated with wind-scale error, burst-altitude error, or anything else checked.
+   - Burst scale is the weakest band at 15/20 coverage.
+   - T-V5's ascent-Cd criterion still needs a decision (see step 4) — it is measured and printed,
+     not gated, and BLUEPRINT §10 stands until someone rules on it.
+
 6. **Report, screenshots SC-1…SC-10, compliance checklist.** Week 10, tag `v1.0-submission`.
 
 **Standing constraints:** no scientific libraries in `src/main`, no network in any test, SI units
