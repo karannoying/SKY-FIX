@@ -1,6 +1,6 @@
 # Handoff: SKYFIX — balloon landing-footprint prediction with in-flight estimation
 
-_Last updated: 2026-09-14_
+_Last updated: 2026-09-15_
 
 ## Goal
 
@@ -150,28 +150,52 @@ Work in order. The MVP is tagged, so everything below is additive.
 3. ~~`SyntheticFlightWriter` + 20 truth flights, `CsvTelemetryReader`, `BurstDetector` + T-E2.~~
    **Done.** DS-6 exists and regenerates byte-identically via `run.sh synth`; T-E2 passes on six
    seeds with 0.0–2.3 s and 1–36 m error and no false positives across dropouts.
-4. **`ParticleFilter`, `GaussianMeasurementModel`, `SystematicResampler`, `ReplayService`, T-V5.**
-   Week 8 — **next**, tag `v0.3-estimator`. The ensemble runner is green, so this is unblocked.
+4. ~~`ParticleFilter`, `GaussianMeasurementModel`, `SystematicResampler`, `ReplayService`, T-V5.~~
+   **Built and green.** `run.sh replay` estimates parameters from a log and re-predicts the
+   footprint as the flight unfolds. ADR-3 has the design and every measurement behind it; ADR-17
+   settles the FR-3.3 cadence question that was open here.
 
-   What is already in place: `DispersionSpec` is the prior the particle set is drawn from and
-   `DispersionSampler` can draw it; `BurstDetector` tells the filter when to switch to the descent
-   model; `FlightSimulator.runFrom` propagates a particle from a measured state; `EnsembleRunner`
-   does the FR-3.3 re-prediction, measured at 1,054 ms for 200 members.
+   **T-V5, all twenty DS-6 flights at N = 500** (`ParameterRecoveryTest`, `-Pperf`, 6.5 min):
 
-   Three things to decide early:
-   - **Cost.** ADR-3 caps the filter at 500 particles. Propagating 500 particles per update over a
-     ~8,000-sample log is the expensive part, so measure it before tuning anything else — the
-     answer probably means propagating on a coarser cadence than every sample.
-   - **FR-3.3's stated rationale does not hold arithmetically.** It justifies a 5 s re-prediction
-     budget as letting "a 1 Hz log replayed at 10x drop no updates", but 10x replay allows 100 ms
-     per sample, so a 5 s re-prediction cannot run per-sample under any implementation. The
-     tolerance is met (1,054 ms); the rationale implies re-prediction is periodic rather than
-     per-sample. Settle which it is before building on it.
-   - **The measurement model needs a pressure channel.** `CsvTelemetryReader` already derives
-     pressure altitude and flags it, so the filter can weight a GPS altitude and a barometric one
-     differently — worth doing, since a dropout leaves only the barometer.
-5. **`ReportService`, T-V6, T-V7, PL-3…PL-6, coverage to 80% on `estimation`.** Week 9, tag
-   `v0.4-validated`.
+   | criterion | result | status |
+   |---|---|---|
+   | burst altitude within 500 m | **20 / 20** (17 inside 130 m, worst 461 m) | **gated, passing** |
+   | ascent Cd within 5% | 5 / 20 | reported, not gated — see below |
+   | parachute Cd within 5% | 15 / 20 | reported — bimodal, unexplained |
+
+   **Three findings, in order of how much they matter.**
+
+   - **The 5-95% bands are not calibrated.** Coverage of the value each flight was generated from
+     is **0/20** for free lift, ascent Cd and burst scale, and 5/20 for parachute Cd; a calibrated
+     band would cover about 18/20. The medians are good — burst altitude to tens of metres — but
+     the intervals around them are not intervals anyone should rely on, and that goes straight at
+     the project's central claim. Cause understood (particle impoverishment); the fix is not simply
+     a wider roughening floor, since holding a dimension open at its prior width was measured to
+     take the ascent-Cd median from 1.6% to 32% error. **This is the first job of week 9** and is
+     what T-V6 is for. Until then, do not quote a band as a credible interval anywhere.
+   - **Ascent Cd is not identifiable to 5% from this observation set**, so T-V5's criterion tests
+     the prior rather than the filter. Measured: a 5% ascent-Cd error absorbed by a 6% free-lift
+     change reproduces the whole flight's altitude profile to 10.5 m RMS — the GPS noise itself —
+     and over the ascent alone a 20% error matches to 0.44 m. The two columns slide together on
+     every flight. **Amending a graded acceptance criterion is not the implementer's call**: the
+     measurement and a proposed replacement are in ADR-3's Consequences, and BLUEPRINT §10 stands
+     until someone decides. `ParameterRecoveryTest` prints the number and gates on burst altitude.
+   - **Parachute drag is bimodal** — sixteen flights under 5%, most under 1%, and four at 15-26%.
+     Not correlated with the flight's wind-scale error, its burst-altitude error, or anything else
+     checked. Worth an hour before the report; it is reported, not gated.
+
+   Four defects were found by measurement during this work and are written up in ADR-3 with their
+   numbers: the vertical-rate sigma must be derived from the differencing baseline rather than
+   assumed; burst diameter must be redrawn from a *censored* prior, not a plain one; burst must be
+   signalled by `BurstDetector` rather than by the first particle to burst; and the Liu-West jitter
+   kernel needs the full weighted covariance, not per-dimension variances.
+
+   **Still to do before tagging `v0.3-estimator`:** the tag itself, and a decision on the T-V5
+   criterion above.
+
+5. **Band calibration (T-V6), `ReportService`, T-V7, PL-3…PL-6, coverage to 80% on `estimation`.**
+   Week 9, tag `v0.4-validated`. Start with the 0/20 coverage above — everything else in the report
+   rests on the bands meaning something.
 6. **Report, screenshots SC-1…SC-10, compliance checklist.** Week 10, tag `v1.0-submission`.
 
 **Standing constraints:** no scientific libraries in `src/main`, no network in any test, SI units

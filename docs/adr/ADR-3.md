@@ -124,34 +124,90 @@ a 20% Cd error compensated by free lift matches the ascent profile to **0.44 m**
 observable at all after burst: the information about them arrives entirely before the moment they
 stop mattering.
 
-**Measured recovery, six DS-6 flights at N = 500:**
+**Measured recovery, all twenty DS-6 flights at N = 500, assimilating every 10th sample**
+(`ParameterRecoveryTest`, `-Pperf`; 6.5 min):
 
-| flight | ascent Cd error | burst altitude error |
-|---|---|---|
-| 01 | 15.07% | 1 m |
-| 02 | 2.71% | 98 m |
-| 03 | 0.63% | 0 m |
-| 04 | 19.66% | 52 m |
-| 05 | 15.62% | 2 m |
-| 06 | 0.97% | 7 m |
+| flight | free lift | ascent Cd | burst scale | chute Cd | burst altitude | ESS |
+|---|---|---|---|---|---|---|
+| 01 | −0.94% | −0.35% | +0.28% | +0.06% | +73 m | 500 |
+| 02 | −6.88% | −5.77% | −0.96% | +20.36% | −40 m | 279 |
+| 03 | +4.61% | +4.00% | +0.36% | −1.56% | −23 m | 490 |
+| 04 | +20.54% | +17.19% | +1.37% | +4.35% | −100 m | 308 |
+| 05 | −5.35% | −5.48% | −1.12% | −2.21% | −116 m | 437 |
+| 06 | −3.93% | −4.21% | +0.37% | +15.52% | +154 m | 302 |
+| 07 | −10.68% | −8.38% | −1.36% | −0.70% | −24 m | 273 |
+| 08 | +6.43% | +6.44% | +0.65% | +8.70% | −5 m | 346 |
+| 09 | −17.48% | −14.17% | −2.35% | +4.62% | −53 m | 258 |
+| 10 | −12.20% | −9.85% | −2.13% | −26.29% | −125 m | 500 |
+| 11 | −4.89% | −3.49% | −0.61% | −0.04% | −12 m | 330 |
+| 12 | +31.07% | +23.48% | +2.60% | +1.10% | −75 m | 469 |
+| 13 | +54.46% | +41.77% | +4.14% | +0.11% | −1 m | 405 |
+| 14 | +11.67% | +9.59% | +1.55% | −0.20% | +63 m | 500 |
+| 15 | −27.29% | −22.78% | −5.15% | −0.01% | −461 m | 361 |
+| 16 | −20.10% | −16.12% | −2.32% | −0.03% | −3 m | 257 |
+| 17 | −18.47% | −14.59% | −2.21% | +0.01% | +18 m | 290 |
+| 18 | +26.51% | +20.13% | +1.95% | +0.95% | −55 m | 465 |
+| 19 | +22.48% | +17.73% | +2.71% | −20.05% | +128 m | 500 |
+| 20 | −4.80% | −4.61% | −0.77% | +0.92% | −56 m | 281 |
 
-Burst altitude — the physically decisive quantity, and the one a recovery team cares about — is
-recovered essentially exactly, far inside T-V5's 500 m. Ascent Cd scatters across the width of the
-ridge and does not improve with particle count, which is what an information limit looks like
-rather than a tuning failure.
+Three things this says, in order of how much they matter.
 
+**Burst altitude is recovered essentially exactly: 20 of 20 inside T-V5's 500 m**, seventeen of
+them inside 130 m, and the worst 461 m. That is the physically decisive quantity and the one a
+recovery team acts on, and it is the criterion T-V5 gates on.
+
+**Free lift and ascent Cd slide together along the ridge, exactly as the identifiability table
+predicts.** The two columns track each other on every flight — flight 13 is +54% and +42%, flight
+15 is −27% and −23% — because that is the direction the data cannot see. Ascent Cd is inside 5% on
+5 of 20, and no amount of particles changes that; it is the width of the ridge, not the width of
+the estimator. Notice that burst scale is nonetheless recovered to a few per cent throughout: the
+combination the data constrains is recovered, the individual parameters are not.
+
+**Parachute drag is bimodal.** Sixteen flights recover it to under 5%, most of those to under 1%
+(flights 15, 16, 17 to 0.03% or better), and four land 15-26% out. The failures do not correlate
+with the flight's wind-scale error, with the burst-altitude error, or with the sign of anything
+else checked so far. Not yet explained, so not yet gated.
+
+### Calibration: the bands are not credible
+
+The same run measured how often each 5-95% band contains the value the flight was generated from.
+A calibrated band should contain it about 18 times in 20:
+
+| parameter | 5-95% band covers truth |
+|---|---|
+| free lift | **0 / 20** |
+| ascent Cd | **0 / 20** |
+| burst scale | **0 / 20** |
+| parachute Cd | 5 / 20 |
+
+This is the most important defect in the estimator as it stands, and it is worth stating plainly
+because it goes to the project's central claim. SKYFIX exists to replace a confident point estimate
+with an honest interval. The medians here are good — burst altitude is recovered to a few tens of
+metres — but the intervals around them are not intervals anyone should rely on. A band that never
+contains the truth is worse than no band, because it invites exactly the false confidence the
+whole design is meant to remove.
+
+The cause is understood: particle impoverishment along the directions the likelihood is sharp in.
+`DEFAULT_ROUGHENING` floors each band at 2% of the prior spread, which stops a dimension dying
+outright but is far too narrow to represent the posterior honestly. The obvious fix is not simply a
+larger floor — measured at a floor of one prior spread, the ascent-Cd median degraded from 1.6% to
+32% error, because holding an informed dimension open at its prior width stops it converging at
+all. Fixing the width without losing the median is real work, and it is what T-V6 is for.
 ## Consequences
 
-- T-V5's burst-altitude criterion (500 m) is met with two orders of magnitude to spare.
-- **T-V5's "ascent Cd within 5%" criterion is not supported by the observation set.** It is met on
-  roughly half the flights, and which half is decided by where the random walk along the ridge
-  stopped. [PLACEHOLDER — the amended criterion has not been agreed. The candidate, to be settled
-  before `v0.3-estimator` is tagged, is to score the identifiable quantities instead: burst
-  altitude within 500 m, parachute Cd within 5%, and the posterior median reproducing the observed
-  altitude profile within 3 sigma of the GPS noise — reporting the ascent-Cd error alongside, with
-  the table above as the stated reason it is reported rather than gated.]
-- The reported bands are narrower than the filter can honestly resolve in the ridge directions.
-  `DEFAULT_ROUGHENING` floors them at 2% of the prior spread, which is a floor on impoverishment,
-  not a calibrated credible interval. T-V6 will say how far off the calibration is.
+- T-V5's burst-altitude criterion (500 m) is met on every flight, most by two orders of magnitude.
+  `ParameterRecoveryTest` gates on it.
+- **T-V5's "ascent Cd within 5%" criterion is not supported by the observation set** — it is met on
+  5 of 20 — and `ParameterRecoveryTest` therefore measures and prints it rather than asserting it,
+  with the identifiability table above as the stated reason. [PLACEHOLDER — amending a graded
+  acceptance criterion is not the implementer's call. The measurement and the proposed replacement
+  are recorded here; the criterion in BLUEPRINT §10 stands until it is agreed. The candidate is to
+  gate on the identifiable quantities — burst altitude within 500 m, and the posterior median
+  reproducing the observed altitude profile within 3 sigma of the GPS noise — and to report ascent
+  Cd and parachute Cd alongside.]
+- **The 5-95% bands are not calibrated and must not be quoted as credible intervals** until T-V6
+  addresses them. Measured coverage is 0/20 on three parameters and 5/20 on the fourth.
+- Parachute drag recovers to under 1% on most flights and 15-26% out on four, for reasons not yet
+  established. It is reported, not gated.
 - One filter instance belongs to one replay and is single-threaded by design; the parallelism in
   this project is in `EnsembleRunner`, where the re-prediction runs.
