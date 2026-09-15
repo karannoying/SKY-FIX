@@ -1,7 +1,7 @@
 package com.skyfix.app;
 
 import com.skyfix.domain.error.ValidationException;
-import com.skyfix.estimation.ParticleFilter;
+import com.skyfix.estimation.FilterBank;
 
 /**
  * What a replay may trade against what it costs (FR-3.2, FR-3.3, ADR-3, ADR-17).
@@ -12,12 +12,15 @@ import com.skyfix.estimation.ParticleFilter;
  * entitled to a coarser answer sooner — as long as the coarseness is stated rather than hidden,
  * which is why the run record stores the particle count it actually used.
  *
- * @param particleCount            particles the filter carries; ADR-3 caps the default at 500
+ * @param particleCount            the <em>total</em> particle budget, divided between the bank's
+ *                                 filters (ADR-18)
+ * @param filterCount              independent filters to pool; one is a single filter, whose band
+ *                                 is not a credible interval (ADR-18)
  * @param repredictMembers         members in each in-flight ensemble (FR-3.3)
  * @param repredictIntervalSeconds flight-time seconds between re-predictions (ADR-17)
  * @param assimilateEvery          assimilate every n-th telemetry sample; 1 uses them all
  */
-public record ReplayOptions(int particleCount, int repredictMembers,
+public record ReplayOptions(int particleCount, int filterCount, int repredictMembers,
                             double repredictIntervalSeconds, int assimilateEvery) {
 
     /**
@@ -34,47 +37,69 @@ public record ReplayOptions(int particleCount, int repredictMembers,
     public static final int DEFAULT_REPREDICT_MEMBERS = 200;
 
     /**
+     * Total particles across the bank (ADR-18).
+     *
+     * <p>Sixteen filters of 125. Measured on DS-6, this is where the 5-95% bands start containing
+     * the truth about as often as they claim to, without the medians suffering for it.
+     */
+    public static final int DEFAULT_PARTICLE_BUDGET = 2_000;
+
+    /**
      * @throws IllegalArgumentException if a field is out of range; these are programmer errors,
      *                                  since {@link #validated()} screens user input first
      */
     public ReplayOptions {
-        if (particleCount < 2 || repredictMembers < 1 || repredictIntervalSeconds <= 0
-                || assimilateEvery < 1) {
+        if (particleCount < 2 || filterCount < 1 || repredictMembers < 1
+                || repredictIntervalSeconds <= 0 || assimilateEvery < 1) {
             throw new IllegalArgumentException("replay options out of range: " + particleCount
-                    + ", " + repredictMembers + ", " + repredictIntervalSeconds + ", "
-                    + assimilateEvery);
+                    + ", " + filterCount + ", " + repredictMembers + ", "
+                    + repredictIntervalSeconds + ", " + assimilateEvery);
         }
     }
 
     /**
-     * The blueprint's defaults: 500 particles, 200-member re-predictions every 50 s of flight
-     * time, assimilating every sample.
+     * The measured defaults: 2,000 particles across 16 pooled filters, 200-member re-predictions
+     * every 50 s of flight time, assimilating every sample.
+     *
+     * <p>The particle budget is larger than ADR-3's original 500 because it is now split across a
+     * bank, and because the filter was never the cost that cap was protecting — a filter update
+     * costs about 2 ms per second of flight time at 500 particles against a budget of 100 ms
+     * (ADR-17). The re-prediction is the expensive half and is unchanged.
      *
      * @return the standard options
      */
     public static ReplayOptions standard() {
-        return new ReplayOptions(ParticleFilter.DEFAULT_PARTICLE_COUNT, DEFAULT_REPREDICT_MEMBERS,
-                DEFAULT_REPREDICT_INTERVAL_SECONDS, 1);
+        return new ReplayOptions(DEFAULT_PARTICLE_BUDGET, FilterBank.DEFAULT_FILTER_COUNT,
+                DEFAULT_REPREDICT_MEMBERS, DEFAULT_REPREDICT_INTERVAL_SECONDS, 1);
     }
 
     /** @param v particles to carry @return a copy with that particle count */
     public ReplayOptions withParticleCount(int v) {
-        return new ReplayOptions(v, repredictMembers, repredictIntervalSeconds, assimilateEvery);
+        return new ReplayOptions(v, filterCount, repredictMembers, repredictIntervalSeconds,
+                assimilateEvery);
+    }
+
+    /** @param v independent filters to pool @return a copy with that filter count */
+    public ReplayOptions withFilterCount(int v) {
+        return new ReplayOptions(particleCount, v, repredictMembers, repredictIntervalSeconds,
+                assimilateEvery);
     }
 
     /** @param v members per re-prediction @return a copy with that member count */
     public ReplayOptions withRepredictMembers(int v) {
-        return new ReplayOptions(particleCount, v, repredictIntervalSeconds, assimilateEvery);
+        return new ReplayOptions(particleCount, filterCount, v, repredictIntervalSeconds,
+                assimilateEvery);
     }
 
     /** @param v flight-time seconds between re-predictions @return a copy with that interval */
     public ReplayOptions withRepredictIntervalSeconds(double v) {
-        return new ReplayOptions(particleCount, repredictMembers, v, assimilateEvery);
+        return new ReplayOptions(particleCount, filterCount, repredictMembers, v, assimilateEvery);
     }
 
     /** @param v assimilate every n-th sample @return a copy with that stride */
     public ReplayOptions withAssimilateEvery(int v) {
-        return new ReplayOptions(particleCount, repredictMembers, repredictIntervalSeconds, v);
+        return new ReplayOptions(particleCount, filterCount, repredictMembers,
+                repredictIntervalSeconds, v);
     }
 
     /**
@@ -91,6 +116,13 @@ public record ReplayOptions(int particleCount, int repredictMembers,
         if (particleCount < 2) {
             throw ValidationException.field("particles", particleCount,
                     "at least two particles are needed for a distribution to mean anything");
+        }
+        if (filterCount < 1) {
+            throw ValidationException.field("filters", filterCount, "must be at least 1");
+        }
+        if (particleCount / filterCount < 2) {
+            throw ValidationException.field("particles", particleCount,
+                    "split across " + filterCount + " filters leaves fewer than two each");
         }
         if (repredictMembers < 1) {
             throw ValidationException.field("members", repredictMembers, "must be at least 1");

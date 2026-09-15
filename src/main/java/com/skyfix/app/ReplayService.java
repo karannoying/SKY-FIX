@@ -28,6 +28,7 @@ import com.skyfix.estimation.BurstDetector;
 import com.skyfix.estimation.BurstEvent;
 import com.skyfix.estimation.GaussianMeasurementModel;
 import com.skyfix.estimation.Observation;
+import com.skyfix.estimation.FilterBank;
 import com.skyfix.estimation.ParticleFilter;
 import com.skyfix.persistence.Database;
 import com.skyfix.persistence.EllipseDao;
@@ -171,20 +172,30 @@ public final class ReplayService {
                                double groundElevationM, RunContext context)
             throws SkyfixException {
 
-        int assimilateEvery = options.assimilateEvery();
-
         FlightSimulator simulator = new FlightSimulator(atmosphere, wind);
-        ParticleFilter filter = ParticleFilter.builder()
+        ParticleFilter.Builder template = ParticleFilter.builder()
                 .config(balloon)
                 .simulator(simulator)
                 .settings(settings)
                 .prior(DispersionSpec.preflightDefault(balloon))
                 .measurementModel(GaussianMeasurementModel.standard()
-                        .withWindDrift(launch, WIND_SCALE_SIGMA))
-                .particleCount(options.particleCount())
-                .seed(context.seed())
-                .build();
+                        .withWindDrift(launch, WIND_SCALE_SIGMA));
 
+        try (FilterBank filter = FilterBank.of(template, balloon, options.filterCount(),
+                options.particleCount(), context.seed(), context.hostCores())) {
+            return assimilate(runId, balloon, launch, settings, series, stream, options,
+                    groundElevationM, context, filter, simulator, wind);
+        }
+    }
+
+    private ReplayResult assimilate(long runId, BalloonConfig balloon, GeoPoint launch,
+                                    SimSettings settings, TelemetrySeries series,
+                                    List<Observation> stream, ReplayOptions options,
+                                    double groundElevationM, RunContext context,
+                                    FilterBank filter, FlightSimulator simulator, WindField wind)
+            throws SkyfixException {
+
+        int assimilateEvery = options.assimilateEvery();
         BurstDetector detector = new BurstDetector();
         EnsembleRunner runner = new EnsembleRunner(atmosphere, wind);
         List<TelemetrySample> samples = series.samples();

@@ -233,6 +233,8 @@ public final class SkyfixCli {
                     .withAssimilateEvery(Integer.parseInt(options.getOrDefault("every", "1")))
                     .withParticleCount(Integer.parseInt(options.getOrDefault("particles",
                             String.valueOf(ReplayOptions.standard().particleCount()))))
+                    .withFilterCount(Integer.parseInt(options.getOrDefault("filters",
+                            String.valueOf(ReplayOptions.standard().filterCount()))))
                     .withRepredictMembers(Integer.parseInt(options.getOrDefault("members",
                             String.valueOf(ReplayOptions.DEFAULT_REPREDICT_MEMBERS))))
                     .validated();
@@ -417,7 +419,10 @@ public final class SkyfixCli {
                     --log      <flight.csv>      telemetry log to replay   (required)
                     --sounding-id <n>            wind field to advect with
                     --every    <n>               assimilate every n-th sample (default: 1)
-                    --particles <n>              filter particles (default: 500, ADR-3)
+                    --particles <n>              total particle budget (default: 2000, ADR-18)
+                    --filters  <n>               independent filters to pool (default: 16);
+                                                 1 gives a single filter, whose band is not
+                                                 a credible interval -- see ADR-18
                     --members  <n>               members per re-prediction (default: 200)
                     --recorded                   mark the log as real rather than synthetic
                     --seed     <n>               run seed (default: 42)

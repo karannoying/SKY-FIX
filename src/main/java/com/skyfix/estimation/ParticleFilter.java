@@ -582,44 +582,11 @@ public final class ParticleFilter {
     }
 
     private Posterior.Band bandOf(double[] values) {
-        int[] order = sortedOrder(values);
+        int[] order = WeightedQuantile.order(values);
         return new Posterior.Band(
-                weightedQuantile(values, order, 0.50),
-                weightedQuantile(values, order, 0.05),
-                weightedQuantile(values, order, 0.95));
-    }
-
-    /**
-     * The weighted quantile of a parameter across the particle set.
-     *
-     * <p>Walks the values in ascending order accumulating weight and returns the first value at
-     * which the running total reaches {@code p}. No interpolation between neighbouring particles:
-     * at five hundred particles the gap between adjacent order statistics is far below any
-     * tolerance in this project, and an interpolated value is not one the filter actually holds.
-     */
-    private double weightedQuantile(double[] values, int[] order, double p) {
-        double cumulative = 0.0;
-        for (int k = 0; k < order.length; k++) {
-            cumulative += weights[order[k]];
-            if (cumulative >= p) {
-                return values[order[k]];
-            }
-        }
-        return values[order[order.length - 1]];
-    }
-
-    /** Indices of {@code values} in ascending value order. */
-    private static int[] sortedOrder(double[] values) {
-        Integer[] boxed = new Integer[values.length];
-        for (int i = 0; i < values.length; i++) {
-            boxed[i] = i;
-        }
-        Arrays.sort(boxed, (x, y) -> Double.compare(values[x], values[y]));
-        int[] order = new int[values.length];
-        for (int i = 0; i < values.length; i++) {
-            order[i] = boxed[i];
-        }
-        return order;
+                WeightedQuantile.of(values, weights, order, 0.50),
+                WeightedQuantile.of(values, weights, order, 0.05),
+                WeightedQuantile.of(values, weights, order, 0.95));
     }
 
     /**

@@ -116,6 +116,7 @@ class ReplayServiceTest {
      */
     private static ReplayOptions cheap() {
         return ReplayOptions.standard()
+                .withFilterCount(2)
                 .withParticleCount(40)
                 .withRepredictMembers(20)
                 .withRepredictIntervalSeconds(1200.0);
@@ -142,7 +143,7 @@ class ReplayServiceTest {
         EstimateDao estimates = new EstimateDao(database);
         assertThat(estimates.updateCount(result.run().id()))
                 .isEqualTo(result.assimilatedCount());
-        assertThat(estimates.findForRun(result.run().id(), 40))
+        assertThat(estimates.findForRun(result.run().id(), cheap().particleCount()))
                 .hasSize(result.assimilatedCount());
     }
 
@@ -235,7 +236,7 @@ class ReplayServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
 
         // validated() is what the CLI calls, and it names the flag rather than the field.
-        assertThatThrownBy(() -> new ReplayOptions(1, 30, 50.0, 1).validated())
+        assertThatThrownBy(() -> new ReplayOptions(1, 1, 30, 50.0, 1).validated())
                 .isInstanceOf(IllegalArgumentException.class);
     }
 

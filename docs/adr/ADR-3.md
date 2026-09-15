@@ -180,7 +180,11 @@ A calibrated band should contain it about 18 times in 20:
 | burst scale | **0 / 20** |
 | parachute Cd | 5 / 20 |
 
-This is the most important defect in the estimator as it stands, and it is worth stating plainly
+**This was fixed in ADR-18, which supersedes the paragraphs below**: pooling a bank of independent
+filters over the same particle budget took coverage from 0/20 to 13-16/20, and the default bank to
+15-16/20. The diagnosis that follows is kept because it is what led there.
+
+This was the most important defect in the estimator as first built, and it is worth stating plainly
 because it goes to the project's central claim. SKYFIX exists to replace a confident point estimate
 with an honest interval. The medians here are good — burst altitude is recovered to a few tens of
 metres — but the intervals around them are not intervals anyone should rely on. A band that never
@@ -205,8 +209,9 @@ all. Fixing the width without losing the median is real work, and it is what T-V
   gate on the identifiable quantities — burst altitude within 500 m, and the posterior median
   reproducing the observed altitude profile within 3 sigma of the GPS noise — and to report ascent
   Cd and parachute Cd alongside.]
-- **The 5-95% bands are not calibrated and must not be quoted as credible intervals** until T-V6
-  addresses them. Measured coverage is 0/20 on three parameters and 5/20 on the fourth.
+- **The 5-95% bands of a single filter are not calibrated** — measured coverage 0/20 on three
+  parameters and 5/20 on the fourth. ADR-18 supersedes this: the posterior now comes from a pooled
+  bank of independent filters, measured at 15-16/20.
 - Parachute drag recovers to under 1% on most flights and 15-26% out on four, for reasons not yet
   established. It is reported, not gated.
 - One filter instance belongs to one replay and is single-threaded by design; the parallelism in
