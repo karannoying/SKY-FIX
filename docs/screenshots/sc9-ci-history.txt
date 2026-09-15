@@ -6,6 +6,7 @@ available in the build environment. Every row is checkable at the run URL.
 
 Workflow: .github/workflows/build.yml — on: push to '**', and pull_request.
 Runner:   ubuntu-latest, temurin JDK 21, Maven cache. One job, "verify".
+Snapshot: runs #1 to #15, read 2026-09-15. Later runs are this commit and after.
 
   #   result   commit    elapsed  started (UTC)      head of branch
   --  -------  --------  -------  -----------------  -------------------------------------------
